@@ -148,10 +148,11 @@ install_py_plist "gatekeeper" "run_gatekeeper.py"
 # install_py_plist "aggregator" "run_aggregator.py"  # OPTIONAL — НЕ включать вместе с embedded
 install_py_plist "tunnel-watcher" "run_tunnel.py"
 
-# Шаблоны в config/ (только реально установленные сервисы)
+# Машинные шаблоны — в config/local/ (вне git); config/*.template — обезличенные примеры
 for name in dsh-web opencode gatekeeper tunnel-watcher; do
   if [ -f "$PLIST_DIR/ai.aihub.$name.plist" ]; then
-    cp "$PLIST_DIR/ai.aihub.$name.plist" "$ROOT/config/ai.aihub.$name.plist.template"
+    mkdir -p "$ROOT/config/local"
+    cp "$PLIST_DIR/ai.aihub.$name.plist" "$ROOT/config/local/ai.aihub.$name.plist.template"
   fi
 done
 

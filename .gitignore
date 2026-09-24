@@ -16,6 +16,7 @@ logs/
 .vscode/
 *.plist
 !config/*.template
+config/local/
 
 data/.network_hint_sent
 *.bak
