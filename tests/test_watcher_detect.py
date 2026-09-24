@@ -31,14 +31,21 @@ def _patch_run(monkeypatch, mapping):
     monkeypatch.setattr(subprocess, "run", fake_run)
 
 
+def _patch_public_url(monkeypatch, value: str = ""):
+    """Изоляция от живого .env: кандидат PUBLIC_URL задаётся явно."""
+    monkeypatch.setattr("src.tunnel.watcher.read_public_url_live", lambda: value)
+
+
 def test_serve_empty_config_no_dnsname(monkeypatch):
     """`serve status --json` == {} → Serve не настроен, DNSName не подставляем."""
+    _patch_public_url(monkeypatch)
     _patch_run(monkeypatch, {("tailscale", "serve", "status"): _Res(0, "{}")})
     w = TunnelWatcher()
     assert asyncio.run(w._detect_tailscale_urls()) == []
 
 
 def test_serve_url_found(monkeypatch):
+    _patch_public_url(monkeypatch)
     stdout = (
         '{"Web": {"https://mac.tail123.ts.net:443": '
         '{"Handlers": {"/": {"Proxy": "http://127.0.0.1:8787"}}}}}'
@@ -49,6 +56,7 @@ def test_serve_url_found(monkeypatch):
 
 
 def test_dnsname_fallback_when_serve_status_unsupported(monkeypatch):
+    _patch_public_url(monkeypatch)
     _patch_run(
         monkeypatch,
         {
@@ -63,13 +71,14 @@ def test_dnsname_fallback_when_serve_status_unsupported(monkeypatch):
 
 
 def test_tailscale_missing(monkeypatch):
+    _patch_public_url(monkeypatch)
     _patch_run(monkeypatch, {("tailscale", "serve", "status"): FileNotFoundError()})
     w = TunnelWatcher()
     assert asyncio.run(w._detect_tailscale_urls()) == []
 
 
 def test_public_url_env_first(monkeypatch):
-    monkeypatch.setenv("PUBLIC_URL", "https://from-env.ts.net")
+    _patch_public_url(monkeypatch, "https://from-env.ts.net")
     _patch_run(monkeypatch, {("tailscale", "serve", "status"): _Res(0, "{}")})
     w = TunnelWatcher()
     cands = asyncio.run(w._detect_tailscale_urls())
