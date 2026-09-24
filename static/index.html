@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <title>AIHub</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="css/aihub.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <h1 class="title">AIHub</h1>
+      <div class="status-bar" id="statusBar">
+        <span class="badge" id="dshBadge" data-status="unknown">DSH</span>
+        <span class="badge" id="ocBadge" data-status="unknown">OpenCode</span>
+      </div>
+    </header>
+
+    <div id="offlineBanner" class="offline-banner hidden"></div>
+    <div id="tokenBanner" class="token-banner hidden">Токен бота ещё не задан — авторизация недоступна</div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="agents">Агенты</button>
+      <button class="tab" data-tab="sessions">Сессии</button>
+      <button class="tab" data-tab="settings">Настройки</button>
+    </nav>
+
+    <nav class="filters" id="filters">
+      <button class="filter-btn active" data-filter="active">Активные</button>
+      <button class="filter-btn" data-filter="all">Все</button>
+      <button class="filter-btn" data-filter="dsh">DSH</button>
+      <button class="filter-btn" data-filter="opencode">OpenCode</button>
+    </nav>
+
+    <div class="search-bar hidden" id="searchBar">
+      <input type="search" id="searchInput" placeholder="Поиск по заголовку / каталогу…" autocomplete="off" />
+    </div>
+
+    <main id="main">
+      <div id="stateEmpty" class="state state-empty hidden">
+        <p>Нет активных агентов</p>
+      </div>
+      <div id="stateLoading" class="state state-loading">
+        <div class="spinner"></div>
+        <p>Загрузка…</p>
+      </div>
+      <div id="stateError" class="state state-error hidden">
+        <p id="errorText">Ошибка соединения</p>
+        <button class="btn" id="retryBtn">Повторить</button>
+      </div>
+      <div id="agentList" class="agent-list hidden"></div>
+      <div id="sessionList" class="session-list hidden"></div>
+      <div id="settingsPanel" class="settings-panel hidden"></div>
+    </main>
+
+    <div id="cardOverlay" class="overlay hidden">
+      <div class="card-sheet" id="cardSheet">
+        <div class="card-handle"></div>
+        <div class="card-header">
+          <h2 id="cardTitle">Агент</h2>
+          <button class="icon-btn" id="cardClose" aria-label="Закрыть">✕</button>
+        </div>
+        <div class="card-body" id="cardBody"></div>
+        <div class="card-actions" id="cardActions"></div>
+      </div>
+    </div>
+
+    <div id="confirmOverlay" class="overlay hidden">
+      <div class="confirm-box">
+        <p id="confirmText"></p>
+        <div class="confirm-actions">
+          <button class="btn btn-secondary" id="confirmCancel">Отмена</button>
+          <button class="btn btn-danger" id="confirmOk">Подтвердить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="js/aihub.js"></script>
+</body>
+</html>
