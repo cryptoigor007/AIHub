@@ -50,3 +50,11 @@ rm -f ~/AIHub/.kill
 - tailscale funnel «для удобства»
 - ai.aihub.aggregator sidecar
 - /setmenubutton вручную в BotFather
+
+
+## Быстрый старт (v3.7)
+
+```bash
+./scripts/go.sh
+./scripts/status.sh   # last_in=lan|tailscale|…
+```

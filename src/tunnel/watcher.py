@@ -33,6 +33,7 @@ from ..common.logging import get_logger, setup_logging
 from ..common.netinfo import lan_http_urls, network_hint_message
 from ..common.throttle import mark_notified, notification_due
 from .stub import StubServer
+from .bot_dialog import BotDialog
 
 log = get_logger(__name__)
 
@@ -55,6 +56,10 @@ class TunnelWatcher:
         self._stub: Optional[StubServer] = None
         self._target: str = ""
         self._last_missing_log: float = 0.0
+        self._bot: Optional[BotDialog] = None
+        self._last_serve_attempt: float = 0.0
+        self._last_dns_fix: float = 0.0
+        self._watch_task: Optional[asyncio.Task] = None
 
     def _log_missing(self, event: str, **kw: object) -> None:
         """Не спамить один и тот же warning каждые 15 с — раз в 5 минут."""
@@ -80,6 +85,13 @@ class TunnelWatcher:
         mode = (settings.network_mode or "hybrid").strip().lower()
         log.info("tunnel_watcher_start", mode=mode)
 
+        # Owner bot dialog (D3)
+        try:
+            self._bot = BotDialog()
+            await self._bot.start()
+        except Exception as e:
+            log.warning("bot_dialog_start_skip", error=str(e))
+
         if mode in ("cloudflare", "cf", "public"):
             await self._run_cloudflare_mode()
         else:
@@ -91,7 +103,7 @@ class TunnelWatcher:
     async def _run_tailscale_mode(self) -> None:
         """Только private mesh: URL из Tailscale Serve / DNSName, без публичного входа."""
         log.info("mode_tailscale_mesh_no_public_funnel")
-        asyncio.create_task(self._watch_gatekeeper_flag_only())
+        self._watch_task = asyncio.create_task(self._watch_gatekeeper_flag_only())
 
         while self._running:
             try:
@@ -107,6 +119,7 @@ class TunnelWatcher:
                 if live:
                     if live != self._current_url:
                         await self._on_new_url(live)
+                    await self._maybe_remind_tailscale()
                 else:
                     if urls:
                         self._log_missing("tailscale_url_unreachable", candidates=urls)
@@ -117,6 +130,8 @@ class TunnelWatcher:
                             hint="запустите: ./scripts/enable_tailscale_serve.sh",
                         )
                         await self._notify_mesh_missing(reason="missing")
+                        await self._maybe_autoserve()
+                    await self._maybe_fix_acceptdns()
             except Exception as e:
                 log.error("tailscale_watch_error", error=str(e))
             await asyncio.sleep(15)
@@ -142,40 +157,54 @@ class TunnelWatcher:
         # 2) tailscale serve status --json
         serve_known = False
         try:
-            r = subprocess.run(
-                ["tailscale", "serve", "status", "--json"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if r.returncode == 0:
+            code, out = await self._run_cli("tailscale", "serve", "status", "--json", timeout=10)
+            if code == 127:
+                log.error("tailscale_cli_not_found")
+                return cands
+            if code == 0:
                 serve_known = True
-                m = URL_RE_TS.search(r.stdout or "")
+                m = URL_RE_TS.search(out)
                 if m:
                     add(m.group(0))
-        except FileNotFoundError:
-            log.error("tailscale_cli_not_found")
-            return cands
         except Exception as e:
             log.debug("serve_status_error", error=str(e))
 
         # 3) DNSName из status --json → https://<dnsname> (только если serve status недоступен)
         if not serve_known:
-            dns = self._dns_name()
+            dns = await self._dns_name()
             if dns:
                 add(f"https://{dns}")
         return cands
 
-    def _dns_name(self) -> str:
+    async def _run_cli(self, *args: str, timeout: float = 8.0) -> tuple[int, str]:
+        """Асинхронный запуск CLI: не блокируем event loop (в отличие от subprocess.run).
+
+        Возвращает (returncode, stdout+stderr). 127 — команда не найдена, 124 — таймаут.
+        """
         try:
-            r = subprocess.run(
-                ["tailscale", "status", "--json"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
             )
-            if r.returncode == 0 and r.stdout.strip():
-                data = json.loads(r.stdout)
+        except FileNotFoundError:
+            return 127, ""
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            try:
+                await proc.communicate()
+            except Exception:
+                pass
+            return 124, ""
+        return int(proc.returncode or 0), (out or b"").decode("utf-8", errors="replace")
+
+    async def _dns_name(self) -> str:
+        try:
+            code, out = await self._run_cli("tailscale", "status", "--json", timeout=10)
+            if code == 0 and out.strip():
+                data = json.loads(out)
                 dns = (data.get("Self") or {}).get("DNSName") or ""
                 return dns.rstrip(".")
         except Exception as e:
@@ -404,6 +433,7 @@ class TunnelWatcher:
         upsert_env(Path(".env"), key, value)
 
     async def _set_menu_button(self, public_url: str) -> None:
+        """D6: set default menu button AND explicit chat_id for owner."""
         settings = get_settings()
         token = settings.telegram_bot_token
         if not token:
@@ -414,33 +444,223 @@ class TunnelWatcher:
         webapp_url = f"{public_url.rstrip('/')}{secret}/"
 
         api = f"https://api.telegram.org/bot{token}/setChatMenuButton"
-        payload = {
-            "menu_button": {
-                "type": "web_app",
-                "text": "AIHub",
-                "web_app": {"url": webapp_url},
-            }
+        menu = {
+            "type": "web_app",
+            "text": "AIHub",
+            "web_app": {"url": webapp_url},
         }
+        payloads = [{"menu_button": menu}]  # default
+        owner = settings.owner_telegram_id
+        if owner:
+            payloads.append({"chat_id": int(owner) if str(owner).isdigit() else owner, "menu_button": menu})
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                r = await client.post(api, json=payload)
-                if r.status_code == 200 and r.json().get("ok"):
-                    log.info("menu_button_updated", url=webapp_url)
-                else:
-                    log.warning(
-                        "menu_button_failed",
-                        status=r.status_code,
-                        body=r.text[:300],
-                    )
-                    await self._notify_menu_button_failed(r.status_code)
+                ok_any = False
+                last_status = 0
+                for payload in payloads:
+                    r = await client.post(api, json=payload)
+                    last_status = r.status_code
+                    if r.status_code == 200 and r.json().get("ok"):
+                        ok_any = True
+                        log.info("menu_button_updated", url=webapp_url, chat_id=payload.get("chat_id"))
+                    else:
+                        log.warning(
+                            "menu_button_failed",
+                            status=r.status_code,
+                            body=r.text[:300],
+                            chat_id=payload.get("chat_id"),
+                        )
+                if not ok_any:
+                    await self._notify_menu_button_failed(last_status)
         except Exception as e:
             log.error("menu_button_error", error=str(e))
+
+
+    async def _maybe_autoserve(self) -> None:
+        """D1: try `tailscale serve` with hard timeout if AUTOSERVE enabled."""
+        import os
+        if os.environ.get("TAILSCALE_AUTOSERVE", "1") in ("0", "false", "no"):
+            return
+        now = time.time()
+        if now - self._last_serve_attempt < 300:  # 5 min between attempts
+            return
+        self._last_serve_attempt = now
+        settings = get_settings()
+        port = settings.gatekeeper_port
+        # Do not touch foreign serve config on another port
+        try:
+            _, out = await self._run_cli("tailscale", "serve", "status", timeout=8)
+            if out.strip() and str(port) not in out and ("https" in out.lower() or "http://" in out):
+                await self._notify_owner(
+                    "Обнаружен чужой Tailscale Serve (не наш порт). AIHub его не трогает.",
+                    key="foreign_serve",
+                    hours=6,
+                )
+                return
+        except Exception:
+            pass
+        cmd = [
+            "tailscale", "serve", "--bg", f"--https=443",
+            f"http://127.0.0.1:{port}",
+        ]
+        log.info("autoserve_attempt", cmd=" ".join(cmd))
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                try:
+                    await proc.communicate()
+                except Exception:
+                    pass
+                log.warning("autoserve_timeout_killed")
+                return
+            text = (out or b"").decode("utf-8", errors="replace")
+            log.info("autoserve_result", code=proc.returncode, out=text[:500])
+            if "Serve is not enabled" in text or "serve is not enabled" in text.lower():
+                m = re.search(r"https://login\.tailscale\.com/\S+", text)
+                link = m.group(0) if m else "https://login.tailscale.com/admin/machines"
+                await self._notify_owner(
+                    f"Tailscale Serve не включён.\nВключите: {link}",
+                    key="serve_not_enabled",
+                    hours=3,
+                )
+            elif "certificate" in text.lower() or "HTTPS" in text:
+                await self._notify_owner(
+                    "Проблема с HTTPS-сертификатом Tailscale.\n"
+                    "https://login.tailscale.com/admin/dns",
+                    key="serve_cert",
+                    hours=3,
+                )
+            elif URL_RE_TS.search(text) or proc.returncode == 0:
+                # re-detect on next loop
+                log.info("autoserve_likely_ok")
+        except FileNotFoundError:
+            log.warning("autoserve_no_tailscale_cli")
+        except Exception as e:
+            log.warning("autoserve_error", error=str(e))
+
+    async def _maybe_fix_acceptdns(self) -> None:
+        """D1: AcceptDNS auto-fix when TAILSCALE_AUTODNS=1."""
+        import os
+        if os.environ.get("TAILSCALE_AUTODNS", "1") in ("0", "false", "no"):
+            return
+        now = time.time()
+        if now - self._last_dns_fix < 3600:
+            return
+        # Отмечаем попытку сразу: иначе при уже включённом accept-dns проверка
+        # запускала бы `tailscale dns status` каждые 15 с (блокирующий subprocess).
+        self._last_dns_fix = now
+        try:
+            _, out = await self._run_cli("tailscale", "dns", "status", timeout=8)
+            if "accept-dns" in out.lower() and ("false" in out.lower() or "off" in out.lower()):
+                await self._run_cli("tailscale", "set", "--accept-dns=true", timeout=10)
+                await self._notify_owner(
+                    "Включён AcceptDNS (tailscale set --accept-dns=true).",
+                    key="acceptdns_on",
+                    hours=12,
+                )
+        except Exception as e:
+            log.debug("acceptdns_check_skip", error=str(e))
+
+    async def _maybe_remind_tailscale(self) -> None:
+        """D4: remind to enable Tailscale on phone ≤1/day."""
+        import os
+        from datetime import datetime, timezone
+        if os.environ.get("TAILSCALE_REMIND", "1") in ("0", "false", "no"):
+            return
+        settings = get_settings()
+        flag = settings.data_dir / ".ts_remind"
+        if flag.exists():
+            try:
+                age = time.time() - flag.stat().st_mtime
+                if age < 86400:
+                    return
+            except Exception:
+                return
+        # phone online? best-effort via tailscale status
+        phone_seen = False
+        try:
+            _, out = await self._run_cli("tailscale", "status", "--json", timeout=10)
+            data = json.loads(out or "{}")
+            peers = data.get("Peer") or data.get("Peers") or {}
+            if isinstance(peers, dict):
+                for peer in peers.values():
+                    os_name = str(peer.get("OS") or peer.get("os") or "")
+                    if os_name.lower() in ("ios", "android"):
+                        if peer.get("Online") or peer.get("Active"):
+                            phone_seen = True
+                            break
+        except Exception:
+            pass
+        if phone_seen:
+            return
+        # check last LAN
+        try:
+            from ..common.netinfo import load_netstate
+            net = load_netstate(settings.data_dir)
+            seen_ts = net.get("last_lan_ts") or net.get("last_tailscale_ts")
+            if seen_ts:
+                from datetime import datetime as dt
+                try:
+                    ts = dt.fromisoformat(seen_ts.replace("Z", "+00:00")).timestamp()
+                    if time.time() - ts < 86400:
+                        return
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        await self._notify_owner(
+            "Включите Tailscale на телефоне, чтобы открыть AIHub вне дома.",
+            key="ts_remind",
+            hours=24,
+        )
+        try:
+            flag.parent.mkdir(parents=True, exist_ok=True)
+            flag.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+        except Exception:
+            pass
+
+    async def _notify_owner(self, text: str, *, key: str, hours: float = 1) -> None:
+        """Throttled owner notification via notifier if available."""
+        settings = get_settings()
+        flag = Path(settings.data_dir) / f".notify_{key}"
+        if not notification_due(flag, ttl_sec=hours * 3600):
+            return
+        mark_notified(flag)
+        try:
+            token = settings.telegram_bot_token
+            owner = settings.owner_telegram_id
+            if not token or not owner:
+                return
+            async with httpx.AsyncClient(timeout=15) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": owner, "text": text},
+                )
+        except Exception as e:
+            log.debug("notify_owner_fail", error=str(e))
 
     def stop(self) -> None:
         self._running = False
         self._kill_tunnel()
         if self._stub:
             self._stub.stop()
+        watch = getattr(self, "_watch_task", None)
+        if watch and not watch.done():
+            watch.cancel()
+        bot = getattr(self, "_bot", None)
+        if bot:
+            bot._running = False
+            task = getattr(bot, "_task", None)
+            if task and not task.done():
+                task.cancel()  # не ждём длинный long-poll
+            self._bot = None
 
 
 async def main() -> None:

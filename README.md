@@ -1,7 +1,19 @@
-# AIHub v3.6.0 — управление DSH + OpenCode из Telegram
+# AIHub v3.7.0 — управление DSH + OpenCode из Telegram
 
 Единый WebApp-дашборд для **DeepSeek Harness** и **OpenCode**.
-Соответствует ТЗ v3.6. **Сеть по умолчанию: hybrid — дома LAN без Tailscale, вне дома Tailscale.**
+Сеть по умолчанию: **hybrid** — дома LAN без Tailscale, вне дома Tailscale Serve (mesh HTTPS).
+
+---
+
+## Что нового в 3.7.0
+
+- Полный редизайн UI (mobile-first, тема auto, splash, drawer)
+- Pin / archive / локальные названия чатов
+- Автонейминг технических сессий
+- DSH rename + iframe embed
+- Автопилот Tailscale Serve (timeout 15 с), AcceptDNS, напоминания
+- Бот: `/start` `/link` + кнопки LAN / mesh
+- `./scripts/go.sh` — быстрый старт
 
 ---
 
@@ -16,67 +28,57 @@ chmod +x scripts/*.sh scripts/*.py
 
 Нужны: Python 3.11+, `dsh`, `opencode`, **Tailscale** на Mac и телефоне (один аккаунт).
 
-`cloudflared` не нужен в hybrid/tailscale.
-
-**Секреты** хранятся в `data/vault.enc` (AES-256-GCM), ключ — в macOS Keychain.
-В `.env` секретов нет. Статус: `./scripts/vault_cli.py status`.
+**Секреты** — в `data/vault.enc` (AES-256-GCM), ключ в macOS Keychain. В `.env` секретов нет.
 
 ---
 
-## Запуск (безопасный контур)
+## Запуск
 
 ```bash
+./scripts/go.sh                 # start → health → status → open URL
+# или по шагам:
 ./scripts/start_all.sh
-./scripts/enable_tailscale_serve.sh
+./scripts/enable_tailscale_serve.sh   # с таймаутом 15 с
 ./scripts/doctor.sh
-./scripts/status.sh
+./scripts/status.sh                   # + last_in= канал клиента
 ```
 
-На телефоне: Tailscale → VPN On → кнопка «AIHub» в боте.
-
-Порядок launchd: dsh-web → opencode → gatekeeper → tunnel-watcher.
-Sidecar `ai.aihub.aggregator` не поднимать.
-
----
-
-## Сеть
-
-| Режим | .env | Поверхность |
-|-------|------|-------------|
-| **hybrid (по умолчанию)** | NETWORK_MODE=hybrid | Дома LAN HTTP; вне дома Tailscale HTTPS |
-| tailscale | NETWORK_MODE=tailscale | Только mesh |
-| cloudflare | NETWORK_MODE=cloudflare | Публичный trycloudflare |
-
-См. `docs/NETWORK_TAILSCALE.md`. Не включайте `tailscale funnel`.
-Дома URL: `./scripts/status.sh` или `./scripts/open_url.sh`.
-
----
-
-## Безопасность
-
-- Нет входа из публичного интернета (mesh)
-- Только OWNER_TELEGRAM_ID
-- UI/API под /p/&lt;secret&gt;/
-- initData HMAC + cookie HttpOnly; Secure; SameSite=Lax
-- Rate-limit, audit, .kill → 503
-- DSH/OpenCode только 127.0.0.1
+На телефоне: Tailscale → VPN On → кнопка «AIHub» в боте (или `/link`).
 
 ---
 
 ## Проверки
 
 ```bash
-./scripts/check_once.sh
+./scripts/check_once.sh         # pytest + smoke + acceptance
+PYTHONPATH=src python -m pytest tests/ -q
 ```
 
-Ручной E2E: `docs/ACCEPTANCE.md`.
+---
 
-Опционально рядом: grinev/opencode-telegram-bot на :4096 для чат-OpenCode.
+## Сеть (hybrid)
 
-## Авария
+| Где | Как |
+|-----|-----|
+| Дома (LAN) | `http://<IP-Mac>:8787/p/…/` без VPN |
+| Вне дома | Tailscale Serve → `https://*.ts.net/p/…/` |
 
-```bash
-touch .kill
-rm -f .kill
-./scripts/logs.sh
+Выключатели: `TAILSCALE_AUTOSERVE`, `TAILSCALE_AUTODNS`, `TAILSCALE_REMIND` (default `1`).
+
+Подробнее: [docs/NETWORK_TAILSCALE.md](docs/NETWORK_TAILSCALE.md), [docs/RUNBOOK.md](docs/RUNBOOK.md).
+
+---
+
+## Структура
+
 ```
+src/gatekeeper   UI-шелл, auth, API, proxy DSH, WS
+src/aggregator   поллинг DSH+OpenCode, действия, autoname
+src/tunnel       watcher + bot_dialog + autoserve
+src/common       config, vault, clients, chat_meta, netinfo
+static/          WebApp (HTML/CSS/JS)
+scripts/         start/stop/doctor/smoke/go/setup
+tests/           pytest
+```
+
+Лицензия и соответствие: [docs/COMPLIANCE.md](docs/COMPLIANCE.md).

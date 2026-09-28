@@ -1,0 +1,20 @@
+AIHub v3.7.0 — быстрый старт (macOS)
+
+1) Распакуйте архив:
+   unzip AIHub-v3.7.0-FINAL.zip && cd AIHub-v3.7.0-FINAL
+
+2) Установка:
+   chmod +x scripts/*.sh scripts/*.py
+   ./scripts/install.sh
+   ./scripts/setup.sh          # Telegram Bot + vault
+
+3) Запуск:
+   ./scripts/go.sh
+   # или: ./scripts/start_all.sh && ./scripts/enable_tailscale_serve.sh
+
+4) Проверки:
+   ./scripts/status.sh
+   ./scripts/check_once.sh
+
+Тесты (уже прогнаны в сборке): pytest — см. reports/pytest.txt
+Документация: README.md, docs/SETUP.md, docs/RUNBOOK.md

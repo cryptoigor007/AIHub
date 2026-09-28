@@ -29,3 +29,15 @@ GATEKEEPER_HOST=0.0.0.0
 - `cloudflare` — публичный quick tunnel (слабее)
 
 **Funnel не использовать** для max-security.
+
+
+## Autopilot (v3.7.0)
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `TAILSCALE_AUTOSERVE` | `1` | Auto `tailscale serve --bg` with 15s timeout |
+| `TAILSCALE_AUTODNS` | `1` | Auto `tailscale set --accept-dns=true` |
+| `TAILSCALE_REMIND` | `1` | Daily phone Tailscale reminder |
+
+`scripts/go.sh` — idempotent start + status + open URL.
+`/health` (trusted) returns `last_channel`: loopback | lan | tailscale | other.

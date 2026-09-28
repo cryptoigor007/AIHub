@@ -21,10 +21,12 @@ import sys
 d = json.loads(sys.argv[1])
 lans = d.get("lan_urls") or []
 lan = lans[0] if lans else "—"
+ch = d.get("last_channel") or "—"
 print(
     f"gatekeeper={d.get('status')} dsh={d.get('dsh')} oc={d.get('opencode')} "
     f"kill={d.get('kill_switch')} ver={d.get('version')} "
     f"mode={d.get('network_mode') or '—'} "
-    f"mesh={d.get('public_url') or '—'} lan={lan}"
+    f"mesh={d.get('public_url') or '—'} lan={lan} "
+    f"last_in={ch}"
 )
 PY

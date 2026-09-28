@@ -432,7 +432,72 @@ class OpenCodeClient:
                         return out
         return []
 
+    @staticmethod
+    def _extract_assistant_text(msgs: list[dict]) -> str:
+        """Текст ассистентского сообщения V1/V2 (parts/text/content); новые идут первыми."""
+        for m in msgs or []:
+            role = str(m.get("role") or m.get("type") or "").lower()
+            if role not in ("assistant", "ai", "model", "output"):
+                continue
+            raw: Any = m.get("text") or m.get("message") or m.get("content") or ""
+            if isinstance(raw, list):
+                parts: list[str] = []
+                for p in raw:
+                    if isinstance(p, dict):
+                        if str(p.get("type") or "") == "reasoning":
+                            continue
+                        t = p.get("text") or p.get("content")
+                        if t:
+                            parts.append(str(t))
+                    elif p:
+                        parts.append(str(p))
+                raw = " ".join(parts)
+            out = str(raw).strip()
+            if out:
+                return out
+        return ""
+
+    async def prompt_once(self, text: str, *, model: str | None = None) -> str:
+        """One-shot prompt via temporary session (for autoname). Returns plain text.
+
+        Ассистент отвечает асинхронно — ждём до ~30с, затем удаляем временную сессию.
+        """
+        sid = ""
+        try:
+            extra: dict = {}
+            if model:
+                extra["model"] = model
+            session = await self.create_session(title="__aihub_autoname__")
+            data = session.get("data") if isinstance(session, dict) else {}
+            sid = str(
+                session.get("id")
+                or session.get("sessionID")
+                or session.get("session_id")
+                or (data or {}).get("id")
+                or ""
+            )
+            if not sid:
+                return ""
+            await self.prompt(sid, text, **extra)
+            import asyncio
+            deadline = asyncio.get_event_loop().time() + 30.0
+            while asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(1.5)
+                out = self._extract_assistant_text(await self.list_messages(sid))
+                if out:
+                    return out
+            return ""
+        except Exception:
+            return ""
+        finally:
+            try:
+                if sid:
+                    await self.delete_session(sid)
+            except Exception:
+                pass
+
     async def set_model(self, session_id: str, model: Any) -> dict:
+
         """Сменить модель сессии. V2: POST /api/session/{id}/model, V1: PATCH /session/{id}."""
         v2 = (await self.flavor()) == "v2"
         async with self._client() as c:

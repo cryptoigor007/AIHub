@@ -2,79 +2,140 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="color-scheme" content="light dark" />
   <title>AIHub</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="css/aihub.css" />
 </head>
 <body>
-  <div id="app">
-    <header class="header">
-      <h1 class="title">AIHub</h1>
-      <div class="status-bar" id="statusBar">
-        <span class="badge" id="dshBadge" data-status="unknown">DSH</span>
-        <span class="badge" id="ocBadge" data-status="unknown">OpenCode</span>
+  <div id="splash" class="splash" aria-hidden="true">
+    <canvas id="splashCanvas" width="160" height="160"></canvas>
+    <p class="splash-label">AIHub</p>
+  </div>
+
+  <div id="app" class="app is-hidden">
+    <header class="topbar">
+      <button type="button" class="icon-btn" id="menuBtn" aria-label="Меню">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="brand"><span class="brand-ai">AI</span>Hub</div>
+      <div class="seg" id="sysFilter" role="tablist">
+        <button type="button" class="seg-item is-on" data-sys="all">Все</button>
+        <button type="button" class="seg-item" data-sys="dsh">DSH</button>
+        <button type="button" class="seg-item" data-sys="opencode">OC</button>
+      </div>
+      <div class="status-dots">
+        <i class="dot" id="dshDot" data-s="unknown" title="DSH"></i>
+        <i class="dot" id="ocDot" data-s="unknown" title="OpenCode"></i>
       </div>
     </header>
 
-    <div id="offlineBanner" class="offline-banner hidden"></div>
-    <div id="tokenBanner" class="token-banner hidden">Токен бота ещё не задан — авторизация недоступна</div>
-    <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="agents">Агенты</button>
-      <button class="tab" data-tab="sessions">Сессии</button>
-      <button class="tab" data-tab="settings">Настройки</button>
-    </nav>
+    <div id="offlineBanner" class="banner banner-off is-hidden">Нет соединения</div>
+    <div id="tokenBanner" class="banner banner-warn is-hidden">Токен бота не задан</div>
 
-    <nav class="filters" id="filters">
-      <button class="filter-btn active" data-filter="active">Активные</button>
-      <button class="filter-btn" data-filter="all">Все</button>
-      <button class="filter-btn" data-filter="dsh">DSH</button>
-      <button class="filter-btn" data-filter="opencode">OpenCode</button>
-    </nav>
+    <div id="scrim" class="scrim is-hidden"></div>
+    <aside id="drawer" class="drawer" aria-hidden="true">
+      <div class="drawer-pad">
+        <button type="button" class="btn btn-primary btn-block" id="newChatBtn">Новый чат</button>
+        <input type="search" id="drawerSearch" class="search-input" placeholder="Поиск…" autocomplete="off" />
+      </div>
+      <div class="drawer-links">
+        <button type="button" class="drawer-item" data-view="pinned">Закреплённые</button>
+        <button type="button" class="drawer-item" data-view="archived">Архив</button>
+      </div>
+      <div class="drawer-label">История</div>
+      <div id="drawerHistory" class="drawer-list"></div>
+      <div class="drawer-foot">
+        <button type="button" class="drawer-item" id="goMore">Настройки</button>
+      </div>
+    </aside>
 
-    <div class="search-bar hidden" id="searchBar">
-      <input type="search" id="searchInput" placeholder="Поиск по заголовку / каталогу…" autocomplete="off" />
-    </div>
+    <main class="main">
+      <section id="viewChats" class="view is-active">
+        <div id="stateLoading" class="state">
+          <div class="sk sk-1"></div><div class="sk sk-2"></div><div class="sk sk-3"></div>
+        </div>
+        <div id="stateEmpty" class="state is-hidden">
+          <p class="state-title">Нет чатов</p>
+          <button type="button" class="btn btn-primary" id="emptyNew">Создать</button>
+        </div>
+        <div id="stateError" class="state is-hidden">
+          <p id="errorText">Ошибка</p>
+          <button type="button" class="btn" id="retryBtn">Повторить</button>
+        </div>
+        <div id="chatList" class="chat-list is-hidden"></div>
+      </section>
 
-    <main id="main">
-      <div id="stateEmpty" class="state state-empty hidden">
-        <p>Нет активных агентов</p>
-      </div>
-      <div id="stateLoading" class="state state-loading">
-        <div class="spinner"></div>
-        <p>Загрузка…</p>
-      </div>
-      <div id="stateError" class="state state-error hidden">
-        <p id="errorText">Ошибка соединения</p>
-        <button class="btn" id="retryBtn">Повторить</button>
-      </div>
-      <div id="agentList" class="agent-list hidden"></div>
-      <div id="sessionList" class="session-list hidden"></div>
-      <div id="settingsPanel" class="settings-panel hidden"></div>
+      <section id="viewChat" class="view">
+        <div class="chat-bar">
+          <button type="button" class="icon-btn" id="chatBack" aria-label="Назад">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <div class="chat-bar-info">
+            <div class="chat-bar-title" id="chatTitle">Чат</div>
+            <div class="chat-bar-sub" id="chatSub"></div>
+          </div>
+          <button type="button" class="icon-btn" id="chatFind" aria-label="Поиск">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+          </button>
+          <button type="button" class="icon-btn" id="chatMore" aria-label="Ещё">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          </button>
+        </div>
+        <div id="findBar" class="find-bar is-hidden">
+          <input type="search" id="findInput" placeholder="В чате…" />
+          <span id="findCount" class="find-count"></span>
+        </div>
+        <div id="msgList" class="msgs"></div>
+        <div id="typing" class="typing is-hidden"><i></i><i></i><i></i></div>
+        <div id="agentActs" class="acts is-hidden"></div>
+        <div class="composer">
+          <textarea id="msgInput" rows="1" placeholder="Сообщение" maxlength="8000"></textarea>
+          <button type="button" class="send" id="sendBtn" aria-label="Отправить">
+            <svg class="ico-send" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            <svg class="ico-stop is-hidden" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
+        </div>
+      </section>
+
+      <section id="viewDsh" class="view">
+        <div class="embed-bar">
+          <span>DeepSeek Harness</span>
+          <button type="button" class="btn btn-sm" id="dshExt">Открыть</button>
+        </div>
+        <div id="dshState" class="state"><div class="spin"></div><p>Загрузка…</p></div>
+        <iframe id="dshFrame" class="frame is-hidden" title="DSH" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
+      </section>
+
+      <section id="viewOc" class="view">
+        <div class="oc-split">
+          <div id="ocList" class="oc-list"></div>
+          <div id="ocPane" class="oc-pane"><p class="muted">Выберите сессию</p></div>
+        </div>
+      </section>
+
+      <section id="viewMore" class="view">
+        <div id="morePanel" class="more"></div>
+      </section>
     </main>
 
-    <div id="cardOverlay" class="overlay hidden">
-      <div class="card-sheet" id="cardSheet">
-        <div class="card-handle"></div>
-        <div class="card-header">
-          <h2 id="cardTitle">Агент</h2>
-          <button class="icon-btn" id="cardClose" aria-label="Закрыть">✕</button>
-        </div>
-        <div class="card-body" id="cardBody"></div>
-        <div class="card-actions" id="cardActions"></div>
-      </div>
-    </div>
+    <nav class="tabbar" id="tabbar">
+      <button type="button" class="tab is-on" data-tab="chats"><span class="tab-ico">💬</span><span>Чаты</span></button>
+      <button type="button" class="tab" data-tab="dsh"><span class="tab-ico">▣</span><span>DSH</span></button>
+      <button type="button" class="tab" data-tab="oc"><span class="tab-ico">&lt;/&gt;</span><span>OpenCode</span></button>
+      <button type="button" class="tab" data-tab="more"><span class="tab-ico">···</span><span>Ещё</span></button>
+    </nav>
+  </div>
 
-    <div id="confirmOverlay" class="overlay hidden">
-      <div class="confirm-box">
-        <p id="confirmText"></p>
-        <div class="confirm-actions">
-          <button class="btn btn-secondary" id="confirmCancel">Отмена</button>
-          <button class="btn btn-danger" id="confirmOk">Подтвердить</button>
-        </div>
-      </div>
+  <div id="sheet" class="sheet is-hidden">
+    <div class="sheet-card" id="sheetCard">
+      <h3 id="sheetTitle">Действие</h3>
+      <div id="sheetBody"></div>
+      <div class="sheet-actions" id="sheetActions"></div>
     </div>
   </div>
+  <div id="toast" class="toast is-hidden"></div>
   <script src="js/aihub.js"></script>
 </body>
 </html>

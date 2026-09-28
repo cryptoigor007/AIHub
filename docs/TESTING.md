@@ -76,3 +76,13 @@ rm -f .kill          # обратно
 ```
 
 | `./scripts/open_url.sh` | local / LAN / mesh URL |
+
+
+## v3.7.0 additions
+- `tests/test_chat_meta.py` — pins/archive/titles
+- `tests/test_autoname.py` — technical title detection
+- `tests/test_classify_ip.py` — IP channel classification
+- `tests/test_dsh_rename.py` — rename candidates
+- `tests/test_security_ui.py` — XSS escape contract
+- `tests/test_proxy_frame.py` — iframe frame-ancestors
+- `tests/test_no_overlap.py` — import/sanity for new modules

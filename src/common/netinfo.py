@@ -82,3 +82,65 @@ def network_hint_message(*, has_mesh_url: bool, lan_urls: Iterable[str]) -> str:
         lines.append("• Вне дома: установите Tailscale и выполните на Mac:")
         lines.append("  ./scripts/enable_tailscale_serve.sh")
     return "\n".join(lines)
+
+
+def classify_ip(ip: str) -> str:
+    """loopback | lan | tailscale | other"""
+    addr = _parse_ip(ip)
+    if addr is None:
+        return "other"
+    if addr.is_loopback:
+        return "loopback"
+    # Tailscale CGNAT 100.64.0.0/10 and fd7a:115c:a1e0::/48
+    try:
+        if addr.version == 4 and ipaddress.ip_address(ip) in ipaddress.ip_network("100.64.0.0/10"):
+            return "tailscale"
+        if addr.version == 6:
+            v6 = str(addr).lower()
+            if v6.startswith("fd7a:115c:a1e0:"):
+                return "tailscale"
+    except Exception:
+        pass
+    if addr.is_private or addr.is_link_local:
+        return "lan"
+    return "other"
+
+
+def load_netstate(data_dir) -> dict:
+    import json
+    from pathlib import Path
+    path = Path(data_dir) / "netstate.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        return {}
+
+
+def save_netstate(data_dir, state: dict) -> None:
+    import json
+    from pathlib import Path
+    path = Path(data_dir) / "netstate.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        pass
+
+
+def touch_netstate(data_dir, channel: str) -> dict:
+    """Update last_channel / timestamps for owner traffic."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    st = load_netstate(data_dir)
+    st["last_channel"] = channel
+    st["last_seen_ts"] = now
+    if channel == "lan":
+        st["last_lan_ts"] = now
+    if channel == "tailscale":
+        st["last_tailscale_ts"] = now
+    save_netstate(data_dir, st)
+    return st

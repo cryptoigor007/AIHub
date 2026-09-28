@@ -29,16 +29,32 @@ if ! tailscale status >/dev/null 2>&1; then
 fi
 
 echo "1) Serve HTTPS → http://${TARGET_HOST}:${PORT}"
+# Hard timeout 15s — CLI on macOS can hang (D1)
 set +e
 if tailscale serve --help 2>&1 | grep -q '\-\-bg'; then
-  tailscale serve --bg --https=443 "http://${TARGET_HOST}:${PORT}"
-  RC=$?
+  SERVE_CMD=(tailscale serve --bg --https=443 "http://${TARGET_HOST}:${PORT}")
 else
-  tailscale serve https / "http://${TARGET_HOST}:${PORT}"
+  SERVE_CMD=(tailscale serve https / "http://${TARGET_HOST}:${PORT}")
+fi
+# timeout if available, else background+kill
+if command -v timeout >/dev/null 2>&1; then
+  timeout 15 "${SERVE_CMD[@]}"
   RC=$?
+  if [ "$RC" -eq 124 ]; then
+    echo "WARN: tailscale serve timed out (15s) — killed"
+    RC=0  # may still have applied
+  fi
+else
+  "${SERVE_CMD[@]}" &
+  SPID=$!
+  ( sleep 15 && kill "$SPID" 2>/dev/null ) &
+  WPID=$!
+  wait "$SPID" 2>/dev/null
+  RC=$?
+  kill "$WPID" 2>/dev/null || true
 fi
 set -e
-if [ "$RC" -ne 0 ]; then
+if [ "$RC" -ne 0 ] && [ "$RC" -ne 143 ] && [ "$RC" -ne 137 ]; then
   echo "FAIL: tailscale serve exit $RC"
   exit "$RC"
 fi

@@ -122,6 +122,19 @@ async def proxy_http(request: Request, path: str) -> Response:
         for k, v in resp.headers.items()
         if k.lower() not in HOP_BY_HOP and k.lower() != "set-cookie"
     }
+    # Allow same-origin iframe embed in AIHub (C1)
+    for drop in ("x-frame-options", "X-Frame-Options"):
+        out_headers.pop(drop, None)
+    csp_key = next((k for k in out_headers if k.lower() == "content-security-policy"), None)
+    if csp_key:
+        csp = out_headers[csp_key]
+        # force frame-ancestors 'self' without relaxing other directives
+        if "frame-ancestors" in csp.lower():
+            import re
+            csp = re.sub(r"frame-ancestors[^;]*", "frame-ancestors 'self'", csp, flags=re.I)
+        else:
+            csp = csp.rstrip("; ") + "; frame-ancestors 'self'"
+        out_headers[csp_key] = csp
     # Location: localhost → relative proxy path
     loc = out_headers.get("location") or out_headers.get("Location")
     if loc and ("127.0.0.1:3080" in loc or "localhost:3080" in loc):

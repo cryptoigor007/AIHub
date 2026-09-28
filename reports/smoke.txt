@@ -1,0 +1,1 @@
+run on Mac: ./scripts/smoke.sh

@@ -111,9 +111,30 @@ class DSHClient:
                 continue
         return []
 
+    async def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
+        """Try candidate rename endpoints for DSH; return local-fallback marker on failure."""
+        candidates = [
+            ("PATCH", f"/api/sessions/{session_id}", {"title": title}),
+            ("POST", f"/api/sessions/{session_id}/rename", {"title": title}),
+            ("PUT", f"/api/sessions/{session_id}", {"title": title}),
+            ("POST", f"/api/sessions/{session_id}/title", {"title": title}),
+        ]
+        last = "no candidates"
+        for method, path, body in candidates:
+            try:
+                r = await self._request(method, path, json_body=body)
+                if r.status_code < 400:
+                    return {"ok": True, "status": r.status_code, "method": method}
+                last = f"{method} {path} -> {r.status_code}"
+            except Exception as e:
+                last = str(e)
+        return {"ok": False, "error": last, "local": True}
+
     async def post_action(
         self, session_id: str, action: str, payload: dict
     ) -> dict[str, Any]:
+        if action == "rename":
+            return await self.rename_session(session_id, str((payload or {}).get("title") or ""))
         path_map = {
             "send": f"/api/sessions/{session_id}/message",
             "interrupt": f"/api/sessions/{session_id}/interrupt",

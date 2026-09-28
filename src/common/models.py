@@ -79,7 +79,7 @@ class AuthResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    version: str = "3.6.0"
+    version: str = "3.7.0"
     dsh: str
     opencode: str
     token_configured: bool
@@ -89,3 +89,4 @@ class HealthResponse(BaseModel):
     network_mode: str = "hybrid"
     lan_urls: list[str] = []
     network_hint: str = ""
+    last_channel: str = ""

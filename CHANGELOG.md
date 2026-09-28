@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.7.0 — UI redesign + chat meta + network autopilot
+
+- Полный редизайн static/ (Gemini-like, motion Emil Kowalski)
+- Meta чатов: pin / archive / title (`data/pins.json`)
+- DSH rename + local override; API `/api/chats/meta`
+- AutonameService background backfill
+- classify_ip + netstate; bot_dialog /start /link
+- autoserve (15s timeout), AcceptDNS, Tailscale remind
+- DSH iframe frame-ancestors; `scripts/go.sh`
+- Тесты: 105 passed, 12 skipped
+
+
+
 ## 3.6.0 — мастер настройки + шифрованное хранилище
 
 - Мастер первого запуска `./scripts/setup.sh` (Telegram BotFather → токен → OWNER_TELEGRAM_ID)

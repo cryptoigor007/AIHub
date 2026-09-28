@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
 
 import pytest
 
@@ -19,16 +18,22 @@ class _Res:
 
 
 def _patch_run(monkeypatch, mapping):
-    def fake_run(cmd, **kwargs):
+    """Подменяет async _run_cli (subprocess.run больше не используется)."""
+
+    async def fake_run_cli(self, *cmd, timeout=8.0):
         key = tuple(cmd[:3])
         if key in mapping:
             val = mapping[key]
+            if isinstance(val, FileNotFoundError):
+                return 127, ""  # как настоящий _run_cli
             if isinstance(val, Exception):
                 raise val
-            return val
-        raise AssertionError(f"unexpected cmd: {cmd}")
+            if isinstance(val, _Res):
+                return val.returncode, val.stdout
+            return val  # уже (code, out)
+        raise AssertionError(f"unexpected cmd: {list(cmd)}")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(TunnelWatcher, "_run_cli", fake_run_cli)
 
 
 def _patch_public_url(monkeypatch, value: str = ""):

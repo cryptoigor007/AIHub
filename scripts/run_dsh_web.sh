@@ -35,4 +35,10 @@ aihub_wait_port_free "$HOST" "$PORT" "run_dsh_web"
 
 # Запуск web-интерфейса. Точные флаги — проверить на месте (docs/ON_SITE.md).
 # Не передаём --trusted-host.
-exec $DSH_BIN web --host "$HOST" --port "$PORT" >>"$LOG" 2>&1
+# dsh отклоняет свои reserved-переменные (DSH_HOME, DSH_WEB_*) в .env рабочего каталога:
+#   «export DSH_HOME instead of putting it in a .env file».
+# Запускаем из нейтрального каталога, чтобы dsh не читал .env проекта AIHub
+# (нужные переменные уже экспортированы через aihub_load_env выше).
+cd "$HOME"
+# --no-open: launchd-сервис не должен открывать браузер при каждом старте.
+exec $DSH_BIN web --host "$HOST" --port "$PORT" --no-open >>"$LOG" 2>&1

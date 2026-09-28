@@ -67,3 +67,12 @@
 - `/health` отдаёт `lan_urls`/`network_hint` только loopback/сессии владельца (SECRET_PATH не утекает).
 - Владелец получает Telegram-подсказку: нет `*.ts.net` (раз в 6 ч) или кнопка не обновилась (раз в час).
 - Funnel / cloudflare — только явный откат.
+
+
+## v3.7.0 security notes
+
+- UI: HTML escaped (`esc`), no eval, no raw untrusted innerHTML for agent data
+- DSH proxy: X-Frame-Options stripped for same-origin embed; frame-ancestors 'self'
+- App security headers remain SAMEORIGIN for non-proxy responses
+- Bot dialog: owner-only; non-owner updates ignored
+- Rate limits unchanged on API routes

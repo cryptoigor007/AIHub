@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
+from uuid import uuid4
 
 from fastapi import (
     Depends,
@@ -20,8 +21,9 @@ from fastapi.staticfiles import StaticFiles
 
 from ..common.audit import audit
 from ..common.authpolicy import local_login_allowed
+from ..common import chat_meta
 from ..common.config import get_settings, read_public_url_live
-from ..common.netinfo import lan_http_urls, network_hint_message, is_loopback_ip
+from ..common.netinfo import lan_http_urls, network_hint_message, is_loopback_ip, classify_ip, touch_netstate
 from ..common.logging import get_logger, setup_logging
 from ..common.models import AuthRequest, AuthResponse, HealthResponse
 from ..common.session import COOKIE_NAME, create_session_token, verify_session_token
@@ -36,9 +38,9 @@ log = get_logger(__name__)
 
 def _app_version() -> str:
     try:
-        return Path(__file__).resolve().parents[2].joinpath("VERSION").read_text().strip() or "3.6.0"
+        return Path(__file__).resolve().parents[2].joinpath("VERSION").read_text().strip() or "3.7.0"
     except Exception:
-        return "3.6.0"
+        return "3.7.0"
 
 
 # Глобальные ссылки (заполняются при lifespan)
@@ -55,12 +57,9 @@ def get_client_ip(request: Request) -> str:
     return "0.0.0.0"
 
 
-def require_session(request: Request) -> dict:
-    """Dependency: проверяет cookie сессии."""
+def _authenticate(request: Request) -> dict:
+    """Проверка cookie-сессии (без учёта kill switch)."""
     settings = get_settings()
-    if settings.is_kill_switch_active:
-        raise HTTPException(status_code=503, detail="Сервис временно отключён")
-
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=401, detail="Требуется авторизация")
@@ -68,7 +67,26 @@ def require_session(request: Request) -> dict:
     data = verify_session_token(token)
     if not data:
         raise HTTPException(status_code=401, detail="Сессия недействительна")
+    # D2: track owner channel
+    try:
+        ip = get_client_ip(request)
+        ch = classify_ip(ip)
+        touch_netstate(settings.data_dir, ch)
+    except Exception:
+        pass
     return data
+
+
+def require_session(request: Request) -> dict:
+    """Dependency: проверяет cookie сессии."""
+    if get_settings().is_kill_switch_active:
+        raise HTTPException(status_code=503, detail="Сервис временно отключён")
+    return _authenticate(request)
+
+
+def require_session_no_kill(request: Request) -> dict:
+    """Сессия без проверки kill switch — владелец может снять его из UI."""
+    return _authenticate(request)
 
 
 def _is_trusted_client(request: Request) -> bool:
@@ -181,6 +199,13 @@ def create_app() -> FastAPI:
             if trusted
             else ""
         )
+        last_ch = ""
+        if trusted:
+            try:
+                from ..common.netinfo import load_netstate
+                last_ch = str((load_netstate(settings.data_dir) or {}).get("last_channel") or "")
+            except Exception:
+                pass
         return HealthResponse(
             status="ok" if not settings.is_kill_switch_active else "killed",
             version=_app_version(),
@@ -193,6 +218,7 @@ def create_app() -> FastAPI:
             network_mode=getattr(settings, "network_mode", "hybrid") or "hybrid",
             lan_urls=lans,
             network_hint=hint,
+            last_channel=last_ch,
         )
 
     # ---------- Secret path prefix ----------
@@ -327,10 +353,11 @@ def create_app() -> FastAPI:
     @app.get(f"{secret}/", response_class=HTMLResponse)
     @app.get(f"{secret}", response_class=HTMLResponse)
     async def aihub_index(request: Request):
-        """HTML отдаём без cookie — JS сам делает /auth и дальше ходит с сессией."""
-        settings = get_settings()
-        if settings.is_kill_switch_active:
-            raise HTTPException(status_code=503, detail="Сервис временно отключён")
+        """HTML отдаём без cookie — JS сам делает /auth и дальше ходит с сессией.
+
+        Доступен и при kill switch: JS показывает состояние и позволяет владельцу
+        снять его через /api/settings (сам shell секретов не раскрывает).
+        """
         if not general_limiter.is_allowed(get_client_ip(request)):
             raise HTTPException(status_code=429, detail="Rate limit")
 
@@ -368,7 +395,7 @@ def create_app() -> FastAPI:
     ):
         if not _aggregator:
             raise HTTPException(status_code=503, detail="aggregator offline")
-        agent = _aggregator.get_agent(agent_id)
+        agent = _aggregator.get_agent_view(agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Агент не найден")
         data = agent.to_dict()
@@ -407,7 +434,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=429, detail="Rate limit")
         body = await request.json()
         action = body.get("action")
-        payload = body.get("payload", {})
+        payload = body.get("payload") or {}
         if not action:
             raise HTTPException(status_code=400, detail="action required")
 
@@ -425,6 +452,37 @@ def create_app() -> FastAPI:
 
         result = await _aggregator.perform_action(agent_id, action, payload)
         return result
+
+    @app.get(f"{secret}/api/chats/meta")
+    async def api_chats_meta_get(
+        request: Request,
+        session: dict = Depends(require_session),
+    ):
+        if not general_limiter.is_allowed(get_client_ip(request)):
+            raise HTTPException(status_code=429, detail="Rate limit")
+        return chat_meta.load_meta()
+
+    @app.post(f"{secret}/api/chats/meta")
+    async def api_chats_meta_post(
+        request: Request,
+        session: dict = Depends(require_session),
+    ):
+        if not general_limiter.is_allowed(get_client_ip(request)):
+            raise HTTPException(status_code=429, detail="Rate limit")
+        body = await request.json()
+        op = body.get("op") or body.get("action")
+        agent_id = body.get("agent_id") or body.get("id")
+        if not op or not agent_id:
+            raise HTTPException(status_code=400, detail="op and agent_id required")
+        if op in ("pin", "unpin"):
+            meta = chat_meta.toggle_pin(agent_id, pinned=(op == "pin"))
+        elif op in ("archive", "unarchive"):
+            meta = chat_meta.toggle_archive(agent_id, archived=(op == "archive"))
+        elif op == "set_title":
+            meta = chat_meta.set_title(agent_id, str(body.get("title") or ""))
+        else:
+            raise HTTPException(status_code=400, detail=f"unknown op: {op}")
+        return {"ok": True, "meta": meta}
 
     @app.get(f"{secret}/api/sessions")
     async def api_sessions(
@@ -446,7 +504,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=429, detail="Rate limit")
         body = await request.json()
         system = body.get("system", "dsh")
-        payload = body.get("payload", {})
+        payload = dict(body.get("payload") or {})
+        # Явный маршрут «новый чат» = подтверждённое действие пользователя.
+        payload.setdefault("_confirmed", True)
         audit(
             "new_session",
             system=system,
@@ -457,7 +517,7 @@ def create_app() -> FastAPI:
         if not _aggregator:
             raise HTTPException(status_code=503, detail="aggregator offline")
         # Используем фиктивный agent_id для маршрутизации по system
-        fake_id = f"{system}:_new"
+        fake_id = f"{system}:_new:{uuid4().hex[:8]}"
         from ..common.models import AgentState, SystemType, AgentStatus
         from datetime import datetime, timezone
 
@@ -518,7 +578,7 @@ def create_app() -> FastAPI:
         }
 
     @app.get(f"{secret}/api/settings")
-    async def api_settings_get(request: Request, session: dict = Depends(require_session)):
+    async def api_settings_get(request: Request, session: dict = Depends(require_session_no_kill)):
         settings = get_settings()
         return {
             "owner_id": settings.owner_telegram_id,
@@ -526,10 +586,36 @@ def create_app() -> FastAPI:
             "public_url": read_public_url_live() or settings.public_url,
             "dsh_port": settings.dsh_web_port,
             "opencode_port": settings.opencode_serve_port,
+            "gatekeeper_port": settings.gatekeeper_port,
             "env": settings.env,
             "version": _app_version(),
             "kill_switch": settings.is_kill_switch_active,
+            "network_mode": getattr(settings, "network_mode", "hybrid") or "hybrid",
         }
+
+    @app.post(f"{secret}/api/settings")
+    async def api_settings_post(request: Request, session: dict = Depends(require_session_no_kill)):
+        """Toggle kill switch via .kill file (owner only)."""
+        if not general_limiter.is_allowed(get_client_ip(request)):
+            raise HTTPException(status_code=429, detail="Rate limit")
+        settings = get_settings()
+        body = await request.json()
+        if "kill_switch" in body:
+            kill_path = Path(settings.kill_file).expanduser() if getattr(settings, "kill_file", None) else Path(".kill")
+            want = bool(body["kill_switch"])
+            try:
+                if want:
+                    kill_path.parent.mkdir(parents=True, exist_ok=True)
+                    kill_path.write_text("1", encoding="utf-8")
+                else:
+                    for cand in (kill_path, Path(".kill")):
+                        if cand.exists():
+                            cand.unlink()
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+            audit("kill_switch", user_id=session.get("uid"), value=want, ip=get_client_ip(request))
+            return {"ok": True, "kill_switch": want}
+        return {"ok": False, "error": "no supported fields"}
 
         # ---------- WebSocket единого потока ----------
     @app.websocket(f"{secret}/ws")

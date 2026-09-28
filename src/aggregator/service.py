@@ -13,6 +13,8 @@ import httpx
 from ..common.config import get_settings
 from ..common.circuit import dsh_circuit, opencode_circuit
 from ..common.logging import get_logger
+from ..common import chat_meta
+from ..common.autoname import AutonameService
 from ..common.models import (
     AgentState,
     AgentStatus,
@@ -69,10 +71,24 @@ class AggregatorService:
             asyncio.create_task(self._snapshot_loop(), name="snapshot"),
             asyncio.create_task(self._cleanup_loop(), name="cleanup"),
         ]
+        # autoname background backfill
+        try:
+            from ..common.opencode_client import get_opencode_client
+            self._autoname = AutonameService(self, get_opencode_client())
+            await self._autoname.start()
+        except Exception as e:
+            log.warning("autoname_start_skip", error=str(e))
+            self._autoname = None
         log.info("aggregator_service_started")
 
     async def stop(self) -> None:
         self._running = False
+        an = getattr(self, "_autoname", None)
+        if an:
+            try:
+                await an.stop()
+            except Exception:
+                pass
         for t in self._tasks:
             t.cancel()
             try:
@@ -492,7 +508,7 @@ class AggregatorService:
         title = str(
             raw.get("title")
             or raw.get("name")
-            or raw.get("prompt", "")[:80]
+            or str(raw.get("prompt") or "")[:80]
             or raw.get("directory")
             or aid_raw
         )
@@ -569,7 +585,7 @@ class AggregatorService:
             pass
 
         await self._broadcast(
-            {"type": EventType.STATE_UPDATE.value, "agent": agent.to_dict()}
+            {"type": EventType.STATE_UPDATE.value, "agent": self._decorate(agent).to_dict()}
         )
 
     async def _maybe_notify(self, kind: str, agent: AgentState) -> None:
@@ -604,13 +620,33 @@ class AggregatorService:
         if q in self._subscribers:
             self._subscribers.remove(q)
 
+    def _decorate(self, src: AgentState, meta: Optional[dict] = None) -> AgentState:
+        """Копия агента с применёнными chat_meta (title/pin/archive). Живой стейт не трогаем."""
+        if meta is None:
+            meta = chat_meta.load_meta()
+        titles = meta.get("titles") or {}
+        pinned = set(meta.get("pinned") or [])
+        archived = set(meta.get("archived") or [])
+        a = src.model_copy(deep=True)
+        if a.id in titles and titles[a.id]:
+            a.title = titles[a.id]
+            a.meta = dict(a.meta or {})
+            a.meta["local_title"] = True
+        a.meta = dict(a.meta or {})
+        a.meta["pinned"] = a.id in pinned
+        a.meta["archived"] = a.id in archived
+        return a
+
     def get_agents(
         self,
         system: Optional[str] = None,
         status: Optional[str] = None,
         active_only: bool = False,
+        include_archived: bool = False,
     ) -> list[AgentState]:
-        result = list(self._agents.values())
+        meta = chat_meta.load_meta()
+        # Copy agents so we never mutate live state (snapshot/WS safe)
+        result: list[AgentState] = [self._decorate(src, meta) for src in self._agents.values()]
         if system:
             result = [a for a in result if a.system.value == system]
         if status:
@@ -621,11 +657,23 @@ class AggregatorService:
                 for a in result
                 if a.status in (AgentStatus.RUNNING, AgentStatus.WAITING)
             ]
-        result.sort(key=lambda a: a.updated_at, reverse=True)
+        if not include_archived:
+            result = [a for a in result if not (a.meta or {}).get("archived")]
+        result.sort(
+            key=lambda a: (
+                0 if (a.meta or {}).get("pinned") else 1,
+                -(a.updated_at.timestamp() if a.updated_at else 0),
+            )
+        )
         return result
 
     def get_agent(self, agent_id: str) -> Optional[AgentState]:
         return self._agents.get(agent_id)
+
+    def get_agent_view(self, agent_id: str) -> Optional[AgentState]:
+        """Публичный вид агента (с локальными title/pin/archive) для API."""
+        src = self._agents.get(agent_id)
+        return self._decorate(src) if src else None
 
     def get_history(self, agent_id: str) -> list[dict]:
         return list(self._history.get(agent_id, []))
@@ -658,7 +706,8 @@ class AggregatorService:
         except Exception:
             ids = []
         if ids:
-            result = [self._agents[i] for i in ids if i in self._agents]
+            by_id = {a.id: a for a in self.get_agents(include_archived=True)}
+            result = [by_id[i] for i in ids if i in by_id]
             if result:
                 return result
         q = query.lower()
@@ -725,6 +774,7 @@ class AggregatorService:
 
         self, agent_id: str, action: str, payload: dict
     ) -> dict:
+        payload = payload or {}
         agent = self.get_agent(agent_id)
         if not agent:
             return {"ok": False, "error": "Агент не найден"}
@@ -755,6 +805,23 @@ class AggregatorService:
                 return {"ok": r.status_code < 400, "status": r.status_code, "body": r.text[:500]}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
+        if action == "rename":
+            title = str(body.get("title") or "").strip()
+            if not title:
+                return {"ok": False, "error": "пустой title"}
+            result = await client.rename_session(raw_id, title)
+            chat_meta.set_title(agent.id, title)
+            agent.title = title
+            agent.meta = dict(agent.meta or {})
+            agent.meta["local_title"] = True
+            if result.get("ok"):
+                return {"ok": True, "title": title, "remote": True}
+            return {
+                "ok": False,
+                "error": result.get("error") or "remote rename failed",
+                "local": True,
+                "title": title,
+            }
         return await client.post_action(raw_id, action, body)
 
     async def _action_opencode(
@@ -780,8 +847,14 @@ class AggregatorService:
                 )
                 return {"ok": True, "session": data}
             if action == "rename":
-                data = await client.rename_session(raw_id, str(body.get("title") or ""))
-                return {"ok": True, "session": data}
+                title = str(body.get("title") or "").strip()
+                data = await client.rename_session(raw_id, title)
+                if title:
+                    chat_meta.set_title(agent.id, title)
+                    agent.title = title
+                    agent.meta = dict(agent.meta or {})
+                    agent.meta["local_title"] = True
+                return {"ok": True, "session": data, "title": title}
             if action == "approve":
                 # permission once
                 pid = body.get("permission_id") or body.get("permissionID") or agent.meta.get("pending_permission")
@@ -814,9 +887,6 @@ class AggregatorService:
                 if not mid:
                     return {"ok": False, "error": "нужен message_id"}
                 return await client.revert_session(raw_id, str(mid))
-            if action == "rename":
-                data = await client.rename_session(raw_id, str(body.get("title") or ""))
-                return {"ok": True, "session": data}
             return {"ok": False, "error": f"Неизвестное действие: {action}"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
