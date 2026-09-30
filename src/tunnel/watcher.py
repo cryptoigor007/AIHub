@@ -371,25 +371,27 @@ class TunnelWatcher:
             log.debug("network_hint_skip", error=str(e))
 
     async def _notify_mesh_missing(self, reason: str = "missing") -> None:
-        """Mesh URL (*.ts.net) не найден/не отвечает: напомнить, не чаще 6 ч."""
+        """Mesh URL (*.ts.net) не найден/не отвечает: напомнить, не чаще 24 ч."""
         settings = get_settings()
         flag = Path(settings.data_dir) / ".mesh_missing_notified"
-        if not notification_due(flag, ttl_sec=6 * 3600):
+        if not notification_due(flag, ttl_sec=24 * 3600):
             return
         mark_notified(flag)
         if not settings.telegram_bot_token:
             return
         if reason == "unreachable":
             text = (
-                "⚠️ AIHub: внешний HTTPS (*.ts.net) не отвечает.\n\n"
-                "Проверьте на Mac: tailscale serve status\n"
-                "и при необходимости: ./scripts/enable_tailscale_serve.sh\n\n"
-                "Дома в Wi‑Fi всё работает по LAN без VPN (URL: ./scripts/status.sh)."
+                "ℹ️ AIHub: внешний доступ (вне дома) сейчас недоступен.\n\n"
+                "Обычно причина — на Mac выключен Tailscale.\n"
+                "Проверить: tailscale status\n"
+                "Включить: tailscale up (или кнопка в приложении Tailscale)\n\n"
+                "Дома в Wi‑Fi всё работает по LAN без VPN — это напоминание, "
+                "а не сбой дома."
             )
         elif shutil.which("tailscale"):
             text = (
-                "⚠️ AIHub: внешний доступ (*.ts.net) не найден.\n\n"
-                "Вне дома кнопка «AIHub» не откроется, пока не настроен Tailscale Serve.\n"
+                "ℹ️ AIHub: внешний доступ (вне дома) не настроен.\n\n"
+                "Пока не настроен Tailscale Serve, кнопка «AIHub» вне дома не откроется.\n"
                 "На Mac выполните:\n"
                 "  ./scripts/enable_tailscale_serve.sh\n"
                 "и проверьте: tailscale serve status\n\n"
@@ -397,7 +399,7 @@ class TunnelWatcher:
             )
         else:
             text = (
-                "⚠️ AIHub: Tailscale не установлен — вне дома доступ невозможен.\n\n"
+                "ℹ️ AIHub: Tailscale не установлен — вне дома доступ невозможен.\n\n"
                 "1. Установите Tailscale на Mac и телефон: https://tailscale.com/download/mac\n"
                 "2. На Mac: ./scripts/enable_tailscale_serve.sh\n"
                 "3. На телефоне включите VPN Tailscale.\n\n"

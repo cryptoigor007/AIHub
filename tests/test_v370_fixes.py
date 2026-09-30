@@ -119,3 +119,40 @@ def test_prompt_once_handles_nested_session_id():
     assert '(data or {}).get("id")' in src
     assert "deadline" in src
 
+
+def test_shutdown_catches_cancelled_error():
+    """Shutdown не должен падать: CancelledError (BaseException) ловится явно."""
+    for f in ("src/common/autoname.py", "src/tunnel/bot_dialog.py"):
+        src = open(f, encoding="utf-8").read()
+        assert "except asyncio.CancelledError" in src, f
+
+
+@needs_ps
+def test_dsh_token_negative_cache(tmp_path, monkeypatch):
+    """Ненайденный токен не читает лог каждый вызов (негативный кэш)."""
+    from src.common import dsh_token
+
+    monkeypatch.setattr(
+        dsh_token.DSHTokenReader, "log_path",
+        property(lambda self: tmp_path / "nope.log"),
+    )
+    r = dsh_token.DSHTokenReader()
+    calls = {"n": 0}
+    orig = r._read_from_log
+
+    def wrapped():
+        calls["n"] += 1
+        return orig()
+
+    monkeypatch.setattr(r, "_read_from_log", wrapped)
+    assert r.get_token() is None
+    assert r.get_token() is None
+    assert calls["n"] == 1
+
+
+def test_mesh_notify_throttle_is_24h():
+    """Уведомления про внешний доступ — не чаще 24 ч (было 6 ч)."""
+    src = open("src/tunnel/watcher.py", encoding="utf-8").read()
+    assert "ttl_sec=24 * 3600" in src
+
+

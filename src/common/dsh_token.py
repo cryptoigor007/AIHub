@@ -61,8 +61,9 @@ class DSHTokenReader:
                     token = m.group(1)
                     log.debug("dsh_token_found", length=len(token))
                     return token
-        log.warning("dsh_token_not_found_in_log")
-        return None
+        # Не нашли в окне лога (мог «уехать» за 64 КБ) — не теряем последний известный.
+        log.debug("dsh_token_not_found_in_log")
+        return self._token
 
     def get_token(self, force: bool = False) -> Optional[str]:
         path = self.log_path
@@ -74,19 +75,19 @@ class DSHTokenReader:
             except OSError:
                 pass
 
-        if (
-            not force
-            and self._token
-            and mtime == self._last_mtime
-            and (now - self._last_read) < 30
-        ):
-            return self._token
+        # Кэш, в т.ч. негативный: не читаем лог чаще раза в 30 с —
+        # иначе при ненайденном токене warning сыпался на каждый вызов.
+        if not force and (now - self._last_read) < 30:
+            if self._token and mtime == self._last_mtime:
+                return self._token
+            if not self._token:
+                return None
 
         token = self._read_from_log()
+        self._last_read = now
         if token:
             self._token = token
             self._last_mtime = mtime
-            self._last_read = now
         return self._token
 
     def invalidate(self) -> None:

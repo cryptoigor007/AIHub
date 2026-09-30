@@ -57,13 +57,16 @@ class BotDialog:
 
     async def stop(self) -> None:
         self._running = False
-        if self._task:
-            self._task.cancel()
+        task = self._task
+        self._task = None
+        if task:
+            task.cancel()
             try:
-                await self._task
+                await task
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
-            self._task = None
 
     async def _loop(self) -> None:
         backoff = 5
