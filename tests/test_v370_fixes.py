@@ -188,5 +188,20 @@ def test_sse_events_are_not_sessions():
     assert svc.count('startswith("evt_")') >= 2
 
 
+def test_parent_id_parsed_and_children_hidden():
+    """parentID распознаётся; UI показывает только сессии верхнего уровня."""
+    svc = open("src/aggregator/service.py", encoding="utf-8").read()
+    assert 'raw.get("parentID")' in svc
+    js = open("static/js/aihub.js", encoding="utf-8").read()
+    assert "!a.parent_id" in js
+
+
+def test_history_is_chronological():
+    """История приводится к порядку старые→новые (upstream отдаёт новыми первыми)."""
+    svc = open("src/aggregator/service.py", encoding="utf-8").read()
+    assert "list(reversed(hist))" in svc
+
+
+
 
 

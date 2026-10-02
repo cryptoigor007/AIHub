@@ -261,6 +261,8 @@
   /* ── list / filter ────────────────────────────── */
   function getFiltered() {
     let list = Object.values(state.agents);
+    // только сессии верхнего уровня — без под-агентов (children)
+    list = list.filter((a) => !a.parent_id);
     if (state.filter === "dsh") list = list.filter((a) => a.system === "dsh");
     if (state.filter === "opencode") list = list.filter((a) => a.system === "opencode");
     if (state.viewMode === "pinned") list = list.filter((a) => (a.meta || {}).pinned);

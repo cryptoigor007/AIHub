@@ -492,7 +492,12 @@ class AggregatorService:
         ).lower()
         status = STATUS_MAP.get(status_raw, AgentStatus.UNKNOWN)
 
-        parent = raw.get("parent_id") or raw.get("parent") or raw.get("parentId")
+        parent = (
+            raw.get("parent_id")
+            or raw.get("parentID")
+            or raw.get("parentId")
+            or raw.get("parent")
+        )
         parent_id = f"{prefix}:{parent}" if parent else None
 
         usage = raw.get("usage") or raw.get("tokens") or {}
@@ -788,6 +793,8 @@ class AggregatorService:
                 }
             )
         if hist:
+            # upstream отдаёт сообщения новыми первыми → приводим к хронологии (старые→новые)
+            hist = list(reversed(hist))
             self._history[agent_id] = hist[-100:]
             return hist
         return cached
