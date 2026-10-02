@@ -441,7 +441,7 @@ def create_app() -> FastAPI:
         audit(
             "agent_action",
             agent_id=agent_id,
-            action=action,
+            op=action,
             user_id=session.get("uid"),
             ip=get_client_ip(request),
             confirmed=bool(payload.get("_confirmed")),

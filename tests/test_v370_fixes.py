@@ -210,6 +210,28 @@ def test_history_skips_service_records():
     assert 'str(it)[:300]' not in svc
 
 
+def test_action_audit_no_kwarg_conflict():
+    """audit('agent_action', ...) не должен передавать action= (конфликт → 500)."""
+    src = open("src/gatekeeper/app.py", encoding="utf-8").read()
+    assert "action=action" not in src
+    assert "op=action" in src
+
+
+def test_list_sessions_paginates():
+    """list_sessions тянет все страницы (OpenCode пагинирует по cursor)."""
+    src = open("src/common/opencode_client.py", encoding="utf-8").read()
+    assert "cursor" in src
+    assert "limit=500" in src
+
+
+def test_ui_safe_json():
+    """UI не падает на не-JSON ответе (500/HTML)."""
+    js = open("static/js/aihub.js", encoding="utf-8").read()
+    assert "async function safeJson" in js
+    assert "await res.json()" not in js
+
+
+
 
 
 

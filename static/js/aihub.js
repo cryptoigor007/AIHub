@@ -103,6 +103,16 @@
       .replace(/&/g, "&amp;").replace(/</g, "&lt;")
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
+  // Устойчивый разбор ответа: сервер может вернуть не-JSON (500/HTML) — не роняем UI
+  async function safeJson(res) {
+    try {
+      const t = await res.text();
+      if (!t) return {};
+      return JSON.parse(t);
+    } catch (_) {
+      return { ok: false, error: "Сервер вернул не-JSON (HTTP " + (res && res.status) + ")" };
+    }
+  }
   function haptic(type) {
     try { if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred(type || "light"); } catch (_) {}
   }
@@ -166,7 +176,7 @@
         body: JSON.stringify({ initData: tg.initData }),
         credentials: "include",
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!data.ok) {
         if ((data.message || "").includes("Токен")) {
           const tb = $("tokenBanner");
@@ -439,7 +449,7 @@
       const res = await fetch(basePath + "/api/agents/" + encodeURIComponent(id) + "/history", {
         credentials: "include",
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       state.history = data.history || [];
       renderMessages();
     } catch (e) {
@@ -583,7 +593,7 @@
           body: JSON.stringify({ action, payload }),
         }
       );
-      const data = await res.json();
+      const data = await safeJson(res);
       if (data.error === "requires_confirm") {
         const ok = await confirmSheet("Подтвердите", data.message || "Продолжить?");
         if (ok) return doAction(action, Object.assign({}, payload, { _confirmed: true }));
@@ -638,7 +648,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (data.ok) {
         // optimistic local flags
         const a = state.agents[agentId];
@@ -752,8 +762,8 @@
         fetch(basePath + "/api/settings", { credentials: "include" }),
         fetch(basePath + "/api/metrics", { credentials: "include" }),
       ]);
-      const settings = await sRes.json();
-      const metrics = await mRes.json();
+      const settings = await safeJson(sRes);
+      const metrics = await safeJson(mRes);
       const killOn = !!(settings.kill_switch || metrics.kill_switch);
       panel.innerHTML =
         '<div class="card"><h3>Статус</h3>' +
@@ -879,7 +889,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ system }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (data.ok || data.id || data.session) {
         toast("Чат создан");
         haptic("medium");
@@ -1019,7 +1029,7 @@
     try {
       const res = await fetch(basePath + "/api/agents", { credentials: "include" });
       if (res.ok) {
-        const data = await res.json();
+        const data = await safeJson(res);
         (data.agents || []).forEach((a) => { state.agents[a.id] = a; });
       }
     } catch (_) {}

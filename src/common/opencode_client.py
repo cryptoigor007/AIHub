@@ -109,16 +109,43 @@ class OpenCodeClient:
         paths = self._session_paths("", v2=v2) + ["/sessions"]
         async with self._client() as c:
             for path in paths:
-                try:
-                    data = _json_or_none(await c.get(self.base + path))
-                except Exception:
-                    continue
-                if isinstance(data, list):
-                    return data
-                if isinstance(data, dict):
-                    out = data.get("sessions") or data.get("data")
-                    if isinstance(out, list):
-                        return out
+                out: list[dict] = []
+                seen: set[str] = set()
+                cursor: Any = None
+                for _ in range(20):  # защита от зацикливания
+                    url = self.base + path
+                    sep = "&" if "?" in url else "?"
+                    params = "limit=500"
+                    if cursor:
+                        params += f"&cursor={cursor}"
+                    try:
+                        data = _json_or_none(await c.get(url + sep + params))
+                    except Exception:
+                        break
+                    if isinstance(data, list):
+                        return data  # непагинированный ответ
+                    if not isinstance(data, dict):
+                        break
+                    items = data.get("sessions") or data.get("data")
+                    if not isinstance(items, list):
+                        break
+                    new = 0
+                    for x in items:
+                        if isinstance(x, dict):
+                            sid = str(x.get("id") or x.get("sessionID") or "")
+                            if sid and sid not in seen:
+                                seen.add(sid)
+                                out.append(x)
+                                new += 1
+                    cursor = (
+                        data.get("cursor")
+                        or data.get("next")
+                        or data.get("nextCursor")
+                    )
+                    if not cursor or new == 0:
+                        break
+                if out:
+                    return out
         return []
 
     async def session_status_map(self) -> dict[str, Any]:
