@@ -114,6 +114,8 @@ class AggregatorService:
             for item in data.get("agents", []):
                 try:
                     agent = AgentState.model_validate(item)
+                    if agent.id.split(":", 1)[-1].startswith("evt_"):
+                        continue  # id события, а не сессии
                     self._agents[agent.id] = agent
                 except Exception:
                     continue
@@ -410,11 +412,17 @@ class AggregatorService:
         if isinstance(inner, dict):
             if status_hint and "status" not in inner:
                 inner["status"] = status_hint
-            # sessionID → id
-            if not inner.get("id"):
-                sid = payload.get("sessionID") or payload.get("session_id") or inner.get("sessionID")
-                if sid:
-                    inner["id"] = sid
+            # sessionID приоритетнее event-id: события (evt_*) — не сессии
+            sid = (
+                payload.get("sessionID")
+                or payload.get("session_id")
+                or inner.get("sessionID")
+                or inner.get("session_id")
+            )
+            if sid:
+                inner["id"] = sid
+            elif str(inner.get("id") or "").startswith("evt_"):
+                return
             # diff / files
             if "diff" in et or payload.get("diff") or payload.get("files"):
                 files = payload.get("diff") or payload.get("files") or payload.get("changed")
@@ -767,9 +775,14 @@ class AggregatorService:
                     else:
                         texts.append(str(p))
                 content = "\n".join(t for t in texts if t)
+            ts_val = it.get("created_at") or it.get("ts")
+            if ts_val is None:
+                t = it.get("time")
+                ts_val = (t.get("created") or t.get("updated")) if isinstance(t, dict) else t
+            ts_dt = _parse_dt(ts_val)
             hist.append(
                 {
-                    "ts": it.get("created_at") or it.get("time") or it.get("ts"),
+                    "ts": ts_dt.isoformat() if ts_dt else None,
                     "role": it.get("role") or it.get("type"),
                     "message": (content if content is not None else str(it)[:300]),
                 }

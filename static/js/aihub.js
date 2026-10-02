@@ -119,9 +119,17 @@
     }, 2200);
   }
   function fmtTime(iso) {
-    if (!iso) return "";
+    if (iso == null || iso === "") return "";
+    let d;
+    if (typeof iso === "number") {
+      d = new Date(iso < 1e12 ? iso * 1000 : iso);  // сек или мс
+    } else if (typeof iso === "object") {
+      return fmtTime(iso.created || iso.updated || iso.ts || iso.time);
+    } else {
+      d = new Date(iso);
+    }
+    if (isNaN(d.getTime())) return "";  // не "Invalid Date"
     try {
-      const d = new Date(iso);
       const now = new Date();
       const same = d.toDateString() === now.toDateString();
       return same

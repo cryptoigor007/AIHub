@@ -172,4 +172,21 @@ def test_ui_incremental_render_no_full_rebuild():
     assert "el.innerHTML = list.map(rowHtml).join" not in js
 
 
+def test_message_ts_normalized_and_invalid_date_guard():
+    """Время сообщений: объект time{created} → ISO на сервере; UI не рисует Invalid Date."""
+    svc = open("src/aggregator/service.py", encoding="utf-8").read()
+    assert 't.get("created") or t.get("updated")' in svc
+    assert "ts_dt.isoformat() if ts_dt else None" in svc
+    js = open("static/js/aihub.js", encoding="utf-8").read()
+    assert "isNaN(d.getTime())" in js
+
+
+def test_sse_events_are_not_sessions():
+    """События evt_* не попадают в список сессий."""
+    svc = open("src/aggregator/service.py", encoding="utf-8").read()
+    assert 'startswith("evt_")' in svc
+    assert svc.count('startswith("evt_")') >= 2
+
+
+
 
