@@ -202,6 +202,14 @@ def test_history_is_chronological():
     assert "list(reversed(hist))" in svc
 
 
+def test_history_skips_service_records():
+    """В историю не попадают служебные записи (idle/compaction/reasoning) и сырой JSON."""
+    svc = open("src/aggregator/service.py", encoding="utf-8").read()
+    assert '"idle"' in svc and '"compaction"' in svc
+    assert "skip_parts" in svc
+    assert 'str(it)[:300]' not in svc
+
+
 
 
 

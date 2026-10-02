@@ -761,9 +761,14 @@ class AggregatorService:
             return cached
 
         hist = []
+        # служебные записи/части — не сообщения (иначе в чат попадает сырой JSON)
+        skip_types = {"idle", "compaction", "step-start", "step-finish", "snapshot", "patch", "session"}
+        skip_parts = {"reasoning", "step-start", "step-finish", "snapshot", "patch"}
         for it in items:
             if not isinstance(it, dict):
-                hist.append({"message": str(it)[:500]})
+                continue
+            role = str(it.get("role") or it.get("type") or "").lower()
+            if role in skip_types:
                 continue
             content = (
                 it.get("content")
@@ -771,15 +776,26 @@ class AggregatorService:
                 or it.get("message")
                 or it.get("part")
             )
+            if isinstance(content, dict):
+                content = content.get("text") or content.get("content")
             if isinstance(content, list):
-                # parts array
+                # parts array: берём только текст
                 texts = []
                 for p in content:
                     if isinstance(p, dict):
-                        texts.append(str(p.get("text") or p.get("content") or ""))
-                    else:
+                        if str(p.get("type") or "") in skip_parts:
+                            continue
+                        t = p.get("text") or p.get("content")
+                        if t:
+                            texts.append(str(t))
+                    elif p:
                         texts.append(str(p))
-                content = "\n".join(t for t in texts if t)
+                content = "\n".join(texts)
+            if content is None:
+                continue
+            msg_text = str(content).strip()
+            if not msg_text:
+                continue
             ts_val = it.get("created_at") or it.get("ts")
             if ts_val is None:
                 t = it.get("time")
@@ -789,7 +805,7 @@ class AggregatorService:
                 {
                     "ts": ts_dt.isoformat() if ts_dt else None,
                     "role": it.get("role") or it.get("type"),
-                    "message": (content if content is not None else str(it)[:300]),
+                    "message": msg_text,
                 }
             )
         if hist:
