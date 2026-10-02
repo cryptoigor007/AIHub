@@ -152,6 +152,8 @@ class AggregatorService:
                     self._agents.pop(aid, None)
                     self._history.pop(aid, None)
             if drop:
+                for aid in drop:
+                    await self._broadcast({"type": "state_remove", "id": aid})
                 log.info("cleanup_stale_agents", count=len(drop))
 
     async def _snapshot_loop(self) -> None:
@@ -558,6 +560,13 @@ class AggregatorService:
     async def _upsert(self, agent: AgentState) -> None:
         async with self._lock:
             old = self._agents.get(agent.id)
+            if old is not None:
+                a, b = old.to_dict(), agent.to_dict()
+                # updated_at меняется каждый опрос — сравниваем всё, кроме него
+                a.pop("updated_at", None)
+                b.pop("updated_at", None)
+                if a == b:
+                    return  # без реальных изменений: не рассылаем state_update (иначе UI моргает)
             self._agents[agent.id] = agent
 
         if self._notifier and old and old.status != agent.status:

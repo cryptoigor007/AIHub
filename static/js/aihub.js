@@ -210,13 +210,19 @@
       setDot("dsh", msg.dsh_online);
       setDot("opencode", msg.opencode_online);
       updateOffline(msg.dsh_online, msg.opencode_online);
-      render();
+      scheduleRender();
       return;
     }
     if (msg.type === "state_update" && msg.agent) {
       state.agents[msg.agent.id] = msg.agent;
-      render();
+      scheduleRender();
       if (state.selectedId === msg.agent.id) refreshChatHeader();
+      return;
+    }
+    if (msg.type === "state_remove" && msg.id) {
+      delete state.agents[msg.id];
+      if (state.selectedId === msg.id) closeChat();
+      scheduleRender();
       return;
     }
     if (msg.type === "system_online" || msg.type === "system_offline") {
@@ -280,6 +286,28 @@
     $("stateError")?.classList.add("is-hidden");
   }
 
+  let _renderQueued = false;
+  const _rowEls = new Map();   // id -> { el, sig }
+  let _lastOrder = "";
+  let _lastListSig = "";
+
+  function scheduleRender() {
+    if (_renderQueued) return;
+    _renderQueued = true;
+    requestAnimationFrame(() => { _renderQueued = false; render(); });
+  }
+
+  function listSignature(list) {
+    let s = "";
+    for (const a of list) {
+      s += a.id + "|" + (a.title || "") + "|" + (a.system || "") + "|" +
+           (a.status || "") + "|" + (a.updated_at || "") + "|" +
+           ((a.meta || {}).pinned ? 1 : 0) + "|" +
+           (a.last_step || (a.meta || {}).preview || "") + "~";
+    }
+    return s;
+  }
+
   function render() {
     if (state.tab === "more") { renderMore(); return; }
     if (state.tab === "oc") { renderOcList(); return; }
@@ -289,38 +317,78 @@
     const list = getFiltered();
     $("stateLoading")?.classList.add("is-hidden");
     hideError();
+    const el = $("chatList");
     if (!list.length) {
-      $("chatList")?.classList.add("is-hidden");
+      el?.classList.add("is-hidden");
+      if (el) el.replaceChildren();
+      _rowEls.clear(); _lastOrder = ""; _lastListSig = "";
       $("stateEmpty")?.classList.remove("is-hidden");
       return;
     }
     $("stateEmpty")?.classList.add("is-hidden");
-    const el = $("chatList");
     if (!el) return;
     el.classList.remove("is-hidden");
-    el.innerHTML = list.map(rowHtml).join("");
+
+    const sig = listSignature(list);
+    if (sig === _lastListSig) return;  // ничего не изменилось — DOM не трогаем
+    _lastListSig = sig;
+    renderList(el, list);
     renderDrawerHistory(list);
   }
 
-  function rowHtml(a) {
+  function renderList(el, list) {
+    const seen = new Set();
+    for (const a of list) {
+      seen.add(a.id);
+      const html = rowHtml(a);
+      const entry = _rowEls.get(a.id);
+      if (!entry) {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = html;
+        _rowEls.set(a.id, { el: tmp.firstElementChild, sig: html });
+      } else if (entry.sig !== html) {
+        // обновляем содержимое существующего узла — без пересоздания (нет мигания)
+        entry.el.className = "chat-row" + ((a.meta || {}).pinned ? " is-pinned" : "");
+        entry.el.innerHTML = rowInner(a);
+        entry.sig = html;
+      }
+    }
+    // удаляем исчезнувшие
+    for (const [id, e] of _rowEls) {
+      if (!seen.has(id)) { e.el.remove(); _rowEls.delete(id); }
+    }
+    // порядок меняем только если реально изменился
+    const order = list.map((a) => a.id).join(",");
+    if (order !== _lastOrder) {
+      list.forEach((a) => {
+        const e = _rowEls.get(a.id);
+        if (e) el.appendChild(e.el);  // appendChild перемещает существующий узел
+      });
+      _lastOrder = order;
+    }
+  }
+
+  function rowInner(a) {
     const sys = a.system === "dsh" ? "dsh" : "oc";
     const st = (a.status || "").toLowerCase();
     const sd = st === "running" ? "run" : st === "waiting" ? "wait" : "";
-    const pin = (a.meta || {}).pinned ? " is-pinned" : "";
-    const prev = (a.last_step || a.meta?.preview || "").toString().slice(0, 80);
+    const prev = (a.last_step || (a.meta || {}).preview || "").toString().slice(0, 80);
     return (
-      '<div class="chat-row' + pin + '" data-id="' + esc(a.id) + '">' +
-        '<div class="chat-body">' +
-          '<div class="chat-title">' + esc(a.title || a.id) + '</div>' +
-          '<div class="chat-meta">' +
-            '<span class="chip chip-' + sys + '">' + (sys === "dsh" ? "DSH" : "OC") + '</span>' +
-            '<i class="sd ' + sd + '"></i>' +
-            '<span class="chat-time">' + esc(fmtTime(a.updated_at)) + '</span>' +
-          '</div>' +
-          (prev ? '<div class="chat-prev">' + esc(prev) + '</div>' : '') +
+      '<div class="chat-body">' +
+        '<div class="chat-title">' + esc(a.title || a.id) + '</div>' +
+        '<div class="chat-meta">' +
+          '<span class="chip chip-' + sys + '">' + (sys === "dsh" ? "DSH" : "OC") + '</span>' +
+          '<i class="sd ' + sd + '"></i>' +
+          '<span class="chat-time">' + esc(fmtTime(a.updated_at)) + '</span>' +
         '</div>' +
+        (prev ? '<div class="chat-prev">' + esc(prev) + '</div>' : '') +
       '</div>'
     );
+  }
+
+  function rowHtml(a) {
+    const pin = (a.meta || {}).pinned ? " is-pinned" : "";
+    return '<div class="chat-row' + pin + '" data-id="' + esc(a.id) + '">' + rowInner(a) + '</div>';
   }
 
   function renderDrawerHistory(list) {

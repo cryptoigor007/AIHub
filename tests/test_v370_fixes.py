@@ -156,3 +156,20 @@ def test_mesh_notify_throttle_is_24h():
     assert "ttl_sec=24 * 3600" in src
 
 
+def test_upsert_skips_unchanged_broadcast():
+    """Сервер не шлёт state_update, если агент не изменился (кроме updated_at)."""
+    src = open("src/aggregator/service.py", encoding="utf-8").read()
+    assert 'a.pop("updated_at", None)' in src
+    assert "if a == b:" in src
+
+
+def test_ui_incremental_render_no_full_rebuild():
+    """UI: рендеры коалесцируются (rAF) и список обновляется инкрементально."""
+    js = open("static/js/aihub.js", encoding="utf-8").read()
+    assert "function scheduleRender" in js
+    assert "renderList" in js
+    assert "_rowEls" in js
+    assert "el.innerHTML = list.map(rowHtml).join" not in js
+
+
+
