@@ -247,6 +247,17 @@ def test_ui_readable_titles():
     assert "Без названия" in js
 
 
+def test_ui_shows_subagents_in_chat():
+    """Субагенты сессии видны в окне чата (а не в списке слева)."""
+    js = open("static/js/aihub.js", encoding="utf-8").read()
+    assert "function renderSubagents" in js
+    assert "renderSubagents()" in js
+    html = open("static/index.html", encoding="utf-8").read()
+    assert 'id="subagents"' in html
+    css = open("static/css/aihub.css", encoding="utf-8").read()
+    assert ".subagents" in css
+
+
 
 
 

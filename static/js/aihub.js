@@ -241,6 +241,7 @@
       state.agents[msg.agent.id] = msg.agent;
       scheduleRender();
       if (state.selectedId === msg.agent.id) refreshChatHeader();
+      if (state.selectedId) renderSubagents();
       return;
     }
     if (msg.type === "state_remove" && msg.id) {
@@ -462,6 +463,7 @@
       $("msgList").innerHTML = '<p class="muted">Не удалось загрузить историю</p>';
     }
     renderAgentActions();
+    renderSubagents();
   }
 
   function closeChat() {
@@ -469,6 +471,7 @@
     state.history = [];
     state.findQ = "";
     $("findBar")?.classList.add("is-hidden");
+    $("subagents")?.classList.add("is-hidden");
     if (tg && tg.BackButton) tg.BackButton.hide();
     switchView("viewChats");
     setTab("chats");
@@ -574,6 +577,24 @@
       '<button type="button" class="btn btn-sm' + (x.danger ? " btn-danger" : "") +
       '" data-act="' + x.action + '">' + esc(x.label) + "</button>"
     ).join("");
+  }
+
+  // Субагенты текущей сессии (дети) и чем заняты — прямо в окне чата
+  function renderSubagents() {
+    const el = $("subagents");
+    if (!el) return;
+    if (!state.selectedId) { el.classList.add("is-hidden"); return; }
+    const kids = Object.values(state.agents).filter((a) => a.parent_id === state.selectedId);
+    if (!kids.length) { el.classList.add("is-hidden"); el.innerHTML = ""; return; }
+    el.classList.remove("is-hidden");
+    el.innerHTML = '<div class="sub-head">Субагенты · ' + kids.length + '</div>' +
+      kids.map((k) =>
+        '<div class="sub-row">' +
+          '<span class="sub-name">' + esc(dispTitle(k)) + '</span>' +
+          '<i class="sd ' + ((k.status || "").toLowerCase() === "running" ? "run" : "") + '"></i>' +
+          (k.last_step ? '<div class="sub-step">' + esc(String(k.last_step).slice(0, 110)) + '</div>' : '') +
+        '</div>'
+      ).join("");
   }
 
   async function doAction(action, payload) {
