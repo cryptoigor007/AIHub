@@ -761,41 +761,55 @@ class AggregatorService:
             return cached
 
         hist = []
-        # служебные записи/части — не сообщения (иначе в чат попадает сырой JSON)
+        # служебные записи — не сообщения (иначе в чат попадает сырой JSON)
         skip_types = {"idle", "compaction", "step-start", "step-finish", "snapshot", "patch", "session"}
-        skip_parts = {"reasoning", "step-start", "step-finish", "snapshot", "patch"}
         for it in items:
             if not isinstance(it, dict):
                 continue
             role = str(it.get("role") or it.get("type") or "").lower()
             if role in skip_types:
                 continue
-            content = (
-                it.get("content")
-                or it.get("text")
-                or it.get("message")
-                or it.get("part")
-            )
-            if isinstance(content, dict):
-                content = content.get("text") or content.get("content")
-            if isinstance(content, list):
-                # parts array: берём только текст
-                texts = []
-                for p in content:
-                    if isinstance(p, dict):
-                        if str(p.get("type") or "") in skip_parts:
-                            continue
-                        t = p.get("text") or p.get("content")
-                        if t:
-                            texts.append(str(t))
-                    elif p:
-                        texts.append(str(p))
-                content = "\n".join(texts)
-            if content is None:
+            raw = it.get("content") or it.get("text") or it.get("message") or it.get("part")
+            if isinstance(raw, dict):
+                raw = raw.get("content") or raw.get("text")
+            parts: list[dict] = []
+            if isinstance(raw, list):
+                for p in raw:
+                    if not isinstance(p, dict):
+                        if p:
+                            parts.append({"type": "text", "text": str(p)})
+                        continue
+                    pt = str(p.get("type") or "text").lower()
+                    if pt == "reasoning":
+                        txt = str(p.get("text") or "").strip()
+                        if txt:
+                            parts.append({"type": "reasoning", "text": txt})
+                    elif pt == "tool":
+                        st = p.get("state") if isinstance(p.get("state"), dict) else {}
+                        out = st.get("output")
+                        if isinstance(out, (dict, list)):
+                            out = json.dumps(out, ensure_ascii=False)
+                        parts.append(
+                            {
+                                "type": "tool",
+                                "name": str(p.get("name") or "tool"),
+                                "status": str(st.get("status") or ""),
+                                "input": st.get("input"),
+                                "output": (str(out) if out is not None else ""),
+                            }
+                        )
+                    elif pt == "text":
+                        txt = str(p.get("text") or "").strip()
+                        if txt:
+                            parts.append({"type": "text", "text": txt})
+                    # step-start/finish/snapshot/patch и пр. — пропускаем
+            else:
+                txt = str(raw).strip() if raw is not None else ""
+                if txt:
+                    parts.append({"type": "text", "text": txt})
+            if not parts:
                 continue
-            msg_text = str(content).strip()
-            if not msg_text:
-                continue
+            message = "\n".join(x["text"] for x in parts if x.get("type") == "text").strip()
             ts_val = it.get("created_at") or it.get("ts")
             if ts_val is None:
                 t = it.get("time")
@@ -805,7 +819,8 @@ class AggregatorService:
                 {
                     "ts": ts_dt.isoformat() if ts_dt else None,
                     "role": it.get("role") or it.get("type"),
-                    "message": msg_text,
+                    "message": message,
+                    "parts": parts,
                 }
             )
         if hist:

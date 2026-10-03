@@ -373,6 +373,32 @@ mark {
   color: inherit; border-radius: 3px; padding: 0 2px;
 }
 .acts { animation: msg-in 180ms var(--ease-out); }
+
+/* промежуточные шаги в чате: размышления и вызовы инструментов */
+.msg-text { white-space: pre-wrap; word-break: break-word; }
+.msg-reasoning, .msg-tool {
+  margin: 6px 0; border-radius: var(--r); background: var(--surface-2); overflow: hidden;
+}
+.msg-reasoning > summary, .msg-tool > summary {
+  cursor: pointer; padding: 8px 10px; font-size: 13px; color: var(--muted);
+  list-style: none; user-select: none; display: flex; align-items: center; gap: 6px;
+}
+.msg-reasoning > summary::-webkit-details-marker,
+.msg-tool > summary::-webkit-details-marker { display: none; }
+.msg-reasoning > summary::before, .msg-tool > summary::before {
+  content: "▸"; transition: transform 160ms var(--ease); font-size: 11px;
+}
+.msg-reasoning[open] > summary::before,
+.msg-tool[open] > summary::before { transform: rotate(90deg); }
+.reasoning-body {
+  padding: 0 10px 10px; font-size: 13px; color: var(--muted);
+  white-space: pre-wrap; word-break: break-word;
+}
+.msg-tool summary { color: var(--accent); }
+.msg-tool pre {
+  margin: 0; padding: 8px 10px; overflow-x: auto; font-size: 12px;
+  white-space: pre-wrap; word-break: break-word; border-top: 1px solid rgba(128,128,128,.15);
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: .01ms !important;

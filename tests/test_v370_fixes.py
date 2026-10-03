@@ -203,10 +203,11 @@ def test_history_is_chronological():
 
 
 def test_history_skips_service_records():
-    """В историю не попадают служебные записи (idle/compaction/reasoning) и сырой JSON."""
+    """В историю не попадает сырой JSON служебных записей; отдаём структурированные parts."""
     svc = open("src/aggregator/service.py", encoding="utf-8").read()
     assert '"idle"' in svc and '"compaction"' in svc
-    assert "skip_parts" in svc
+    assert '"parts": parts' in svc
+    assert '"reasoning"' in svc and '"tool"' in svc
     assert 'str(it)[:300]' not in svc
 
 
@@ -229,6 +230,21 @@ def test_ui_safe_json():
     js = open("static/js/aihub.js", encoding="utf-8").read()
     assert "async function safeJson" in js
     assert "await res.json()" not in js
+
+
+def test_ui_renders_intermediate_parts():
+    """Чат показывает промежуточные шаги: размышления и инструменты."""
+    js = open("static/js/aihub.js", encoding="utf-8").read()
+    assert "msg-reasoning" in js and "msg-tool" in js
+    css = open("static/css/aihub.css", encoding="utf-8").read()
+    assert ".msg-reasoning" in css and ".msg-tool" in css
+
+
+def test_ui_readable_titles():
+    """Технические id (ses_/evt_) показываются как «Без названия»."""
+    js = open("static/js/aihub.js", encoding="utf-8").read()
+    assert "function dispTitle" in js
+    assert "Без названия" in js
 
 
 

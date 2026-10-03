@@ -113,6 +113,12 @@
       return { ok: false, error: "Сервер вернул не-JSON (HTTP " + (res && res.status) + ")" };
     }
   }
+  // Человекочитаемое название: технические id (ses_/evt_/hex) → «Без названия»
+  function dispTitle(a) {
+    const t = (a && a.title ? String(a.title) : "").trim();
+    if (!t || /^(ses_|evt_|msg_)/i.test(t) || /^[0-9a-f]{12,}$/i.test(t)) return "Без названия";
+    return t;
+  }
   function haptic(type) {
     try { if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred(type || "light"); } catch (_) {}
   }
@@ -395,7 +401,7 @@
     const prev = (a.last_step || (a.meta || {}).preview || "").toString().slice(0, 80);
     return (
       '<div class="chat-body">' +
-        '<div class="chat-title">' + esc(a.title || a.id) + '</div>' +
+        '<div class="chat-title">' + esc(dispTitle(a)) + '</div>' +
         '<div class="chat-meta">' +
           '<span class="chip chip-' + sys + '">' + (sys === "dsh" ? "DSH" : "OC") + '</span>' +
           '<i class="sd ' + sd + '"></i>' +
@@ -427,7 +433,7 @@
       groups[g].forEach((a) => {
         html +=
           '<button type="button" class="drawer-item" data-id="' + esc(a.id) + '">' +
-          esc((a.title || a.id).slice(0, 40)) +
+          esc(dispTitle(a).slice(0, 40)) +
           "</button>";
       });
     });
@@ -472,10 +478,10 @@
   function refreshChatHeader() {
     const a = state.agents[state.selectedId];
     if (!a) return;
-    if ($("chatTitle")) $("chatTitle").textContent = a.title || a.id;
+    if ($("chatTitle")) $("chatTitle").textContent = dispTitle(a);
     const bits = [a.system === "dsh" ? "DSH" : "OpenCode"];
     if (a.project) bits.push(a.project);
-    if (a.status) bits.push(a.status);
+    if (a.status && a.status !== "unknown") bits.push(a.status);
     if ($("chatSub")) $("chatSub").textContent = bits.join(" · ");
     const running = (a.status || "").toLowerCase() === "running";
     $("typing")?.classList.toggle("is-hidden", !running);
@@ -497,20 +503,43 @@
       const role = (m.role || m.type || "assistant").toLowerCase();
       const cls = role.includes("user") || role === "human" ? "user" :
         role.includes("system") ? "system" : role.includes("tool") ? "tool" : "assistant";
-      let text = m.message != null ? m.message : (m.content || m.text || "");
-      if (typeof text !== "string") text = JSON.stringify(text);
-      let body = esc(text);
-      body = body.replace(/```([\s\S]*?)```/g, function (_, code) {
-        return "<pre><code>" + code + "</code></pre>";
+      const parts = (Array.isArray(m.parts) && m.parts.length)
+        ? m.parts
+        : [{ type: "text", text: (m.message != null ? m.message : (m.content || m.text || "")) }];
+      let inner = "";
+      parts.forEach((p) => {
+        if (p.type === "reasoning") {
+          const t = esc(p.text || "");
+          if (!t) return;
+          inner += '<details class="msg-reasoning"><summary>💭 Размышления</summary><div class="reasoning-body">' + t + '</div></details>';
+        } else if (p.type === "tool") {
+          const name = esc(p.name || "tool");
+          const status = p.status ? " · " + esc(p.status) : "";
+          let extra = "";
+          const inp = p.input && (p.input.command || p.input.path || p.input.description || p.input.query || (typeof p.input === "string" ? p.input : ""));
+          if (inp) extra += "<pre>" + esc(String(inp).slice(0, 1500)) + "</pre>";
+          const out = p.output ? String(p.output) : "";
+          if (out) extra += "<pre>" + esc(out.slice(0, 1500)) + "</pre>";
+          inner += '<details class="msg-tool"><summary>🔧 ' + name + status + '</summary>' + extra + '</details>';
+        } else {
+          let text = p.text != null ? String(p.text) : "";
+          if (!text) return;
+          let body = esc(text);
+          body = body.replace(/```([\s\S]*?)```/g, function (_, code) {
+            return "<pre><code>" + code + "</code></pre>";
+          });
+          if (q && text.toLowerCase().includes(q)) {
+            hits++;
+            const re = new RegExp("(" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
+            body = body.replace(re, "<mark>$1</mark>");
+          }
+          inner += '<div class="msg-text">' + body + '</div>';
+        }
       });
-      if (q && text.toLowerCase().includes(q)) {
-        hits++;
-        const re = new RegExp("(" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
-        body = body.replace(re, "<mark>$1</mark>");
-      }
+      if (!inner) return;
       html +=
         '<div class="msg ' + cls + '" data-i="' + i + '">' +
-          body +
+          inner +
           '<div class="msg-time">' + esc(fmtTime(m.ts || m.created_at)) + '</div>' +
           '<button type="button" class="msg-copy" data-copy="' + i + '">копировать</button>' +
         "</div>";
@@ -839,7 +868,7 @@
     const list = Object.values(state.agents).filter((a) => a.system === "opencode");
     el.innerHTML = list.map((a) =>
       '<button type="button" class="drawer-item" data-id="' + esc(a.id) + '">' +
-      esc((a.title || a.id).slice(0, 36)) + "</button>"
+      esc(dispTitle(a).slice(0, 36)) + "</button>"
     ).join("") || '<p class="muted">Нет сессий</p>';
   }
 
