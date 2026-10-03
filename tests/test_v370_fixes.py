@@ -258,6 +258,15 @@ def test_ui_shows_subagents_in_chat():
     assert ".subagents" in css
 
 
+def test_assets_are_not_hard_cached():
+    """Телефон должен подтягивать свежий JS/CSS: Cache-Control no-cache + версия ассетов."""
+    sec = open("src/gatekeeper/security.py", encoding="utf-8").read()
+    assert '"Cache-Control", "no-cache"' in sec
+    html = open("static/index.html", encoding="utf-8").read()
+    assert "aihub.js?v=" in html and "aihub.css?v=" in html
+    assert "?v=3.7.0" not in html  # версия должна бампаться
+
+
 
 
 

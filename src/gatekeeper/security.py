@@ -24,6 +24,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):  # type: ignore[misc]
         response.headers.setdefault(
             "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
         )
+        # Не кэшировать жёстко: телефон должен подтягивать свежий JS/CSS после обновлений
+        response.headers.setdefault("Cache-Control", "no-cache")
         # Не ставим CSP жёстко — DSH UI тянет свои ресурсы через proxy
         return response
 
